@@ -1,0 +1,19 @@
+{% extends "dashboard.html" %}
+
+{% block content %}
+<div class="home-container">
+    <h1>Live CCTV Feed</h1>
+    <div class="video-container">
+        <img src="{{ url_for('video_feed') }}" alt="Video Feed">
+    </div>
+    <div class="counter">
+        <h3>People Counter</h3>
+        <p id="people-count">People in the room: {{ people_in_room }}</p>
+    </div>
+    <div class="movement-counter">
+        <h3>Movement Counter</h3>
+        <p>Left to Right: {{ left_to_right }}</p>
+        <p>Right to Left: {{ right_to_left }}</p>
+    </div>
+</div>
+{% endblock %}
