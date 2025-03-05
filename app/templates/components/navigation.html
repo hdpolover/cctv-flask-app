@@ -1,0 +1,7 @@
+<nav class="main-nav">
+    <ul>
+        <li><a href="{{ url_for('main.home') }}" {% if request.endpoint == 'main.home' %}class="active"{% endif %}>Home</a></li>
+        <li><a href="{{ url_for('main.camera_settings') }}" {% if request.endpoint == 'main.camera_settings' %}class="active"{% endif %}>Camera Settings</a></li>
+        <li><a href="{{ url_for('main.reports') }}" {% if request.endpoint == 'main.reports' %}class="active"{% endif %}>Reports</a></li>
+    </ul>
+</nav>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CCTV People Counter{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    {% include 'components/loading.html' %}
+    {% include 'components/flash.html' %}
+
+    <div class="wrapper">
+        {% if not hide_nav|default(false) %}
+            {% include 'components/navigation.html' %}
+        {% endif %}
+        
+        <main class="main-content">
+            <div class="container">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

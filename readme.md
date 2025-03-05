@@ -1,122 +1,173 @@
-# CCTV People Detection App
+# CCTV People Counter Application
 
-This Flask-based web application monitors a CCTV camera feed and detects people entering and exiting a room. The app uses pre-trained object detection models (like Faster R-CNN or YOLO) to track and count the number of people in the room.
+A Flask-based application for monitoring CCTV camera feeds and tracking people entering and exiting rooms using computer vision. The application uses pre-trained object detection models and provides a real-time web interface for monitoring and configuration.
 
 ## Features
-- Real-time video feed processing to detect people
-- Detection using a pre-trained model (Faster R-CNN/YOLO)
-- Drawing a door line to track movement across the line (indicating entry/exit)
-- Counts how many people entered and exited the room
-- GPU acceleration support via CUDA
 
-## Tech Stack
-- Python 3.x
-- Flask (Web Framework)
-- OpenCV (Video Processing)
-- PyTorch (Machine Learning)
-- TorchVision (Pre-trained Models for Object Detection)
-- CUDA (for GPU acceleration)
+- Real-time people detection and counting using PyTorch and Faster R-CNN
+- Configurable door area for tracking entries and exits
+- Live video streaming with detection overlays
+- Camera settings management through web interface
+- Historical data tracking with Firebase integration
+- GPU acceleration support via CUDA
+- Responsive web interface with real-time updates
+
+## Project Structure
+
+```
+cctv_flask_app/
+├── app/                    # Main application package
+│   ├── api/               # API endpoints
+│   ├── core/              # Core application functionality
+│   ├── models/            # ML models and detection logic
+│   ├── services/          # Business services
+│   ├── static/            # Static assets (CSS, JS, etc.)
+│   ├── templates/         # HTML templates
+│   └── utils/            # Utility functions
+├── config/                # Configuration settings
+├── logs/                  # Application logs
+└── run.py                # Application entry point
+```
+
+## Requirements
+
+- Python 3.8+
+- CUDA-capable GPU (recommended)
+- Webcam or RTSP camera stream
+- Firebase account (for data persistence)
 
 ## Installation
 
-### 1. Clone the repository
+1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/cctv-flask-app.git
-cd cctv-flask-app
+git clone <repository-url>
+cd cctv_flask_app
 ```
 
-### 2. Create a virtual environment
+2. Create and activate a virtual environment:
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # For Mac/Linux
-.venv\Scripts\activate     # For Windows
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
 ```
 
-### 3. Install required dependencies
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Install PyTorch with CUDA support (recommended for performance)
-For CUDA 11.8:
+4. Set up environment variables:
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+cp .env.example .env
+# Edit .env with your configuration
 ```
 
-For CPU only (slower detection):
-```bash
-pip install torch torchvision torchaudio
-```
+5. Set up Firebase:
+- Create a new Firebase project
+- Download service account key JSON file
+- Save as `cctv-app-flask-firebase-adminsdk.json` in project root
 
 ## Configuration
 
-### 1. Camera Setup
-Make sure the CCTV camera is connected and its stream is accessible. In the Flask app, the camera feed is pulled using OpenCV.
+### Environment Variables
 
-Edit the following line in `app.py` to set your camera source:
+Key environment variables in `.env`:
 
-```python
-camera = cv2.VideoCapture('your_camera_url_or_device')  # E.g., "0" for a local camera
-```
+- `FLASK_APP`: Application entry point (default: run.py)
+- `FLASK_ENV`: Environment mode (development/production)
+- `VIDEO_PATH`: Camera source (0 for webcam, or RTSP URL)
+- `FRAME_RATE`: Video processing frame rate
+- `RESOLUTION`: Video resolution (format: width,height)
 
-### 2. Model Setup
-The app uses a pre-trained Faster R-CNN model or YOLO for people detection. By default, it loads the Faster R-CNN model trained on the CCTV dataset.
+### Detection Settings
 
-To use the YOLOv5 model instead of Faster R-CNN, modify the detection code to use `detect_people_yolo()`.
+Configurable in `config/settings.py`:
 
-### 3. GPU Configuration
-The application automatically detects if a CUDA-compatible GPU is available:
+- `SCORE_THRESHOLD`: Confidence threshold for detections
+- `IOU_THRESHOLD`: Intersection-over-Union threshold
+- `TRACKING_THRESHOLD`: Pixel threshold for movement tracking
 
-```python
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-```
+## Running the Application
 
-To check if CUDA is properly configured:
-```bash
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
-## Run the Application
-
-To start the Flask app, run the following command:
-
-```bash
-flask run
-```
-
-For development with debug mode:
+Development mode:
 ```bash
 flask run --debug
 ```
 
-This will start a local server at `http://127.0.0.1:5000/`.
+Production mode:
+```bash
+flask run --host=0.0.0.0
+```
+
+Access the application at `http://localhost:5000`
 
 ## Usage
-- Open your browser and navigate to `http://127.0.0.1:5000/` to view the real-time CCTV feed.
-- The app will detect people entering and exiting the room, and draw bounding boxes around detected people.
-- The door line can be drawn on the video feed to track when people cross it (indicating entry/exit).
-- Real-time counters display how many people entered and exited.
 
-## Detection Logic
-- **Faster R-CNN Model**: A pre-trained Faster R-CNN model is used for detecting people in the video feed.
-- **Crossing Detection**: A door line is drawn on the video frame. If a detected person crosses this line, it is counted as either entering or exiting the room.
-- **Tracking Algorithm**: Centroid tracking is used to maintain person identity across frames.
+1. **Login**: Access the application through the login page
+2. **Camera Setup**:
+   - Navigate to Camera Settings
+   - Configure camera source and parameters
+   - Draw door area for entry/exit tracking
 
-## Performance Optimization
-- **GPU Acceleration**: Using CUDA can significantly improve detection speed.
-- **Frame Skipping**: If running on slower hardware, try adjusting the frame skip rate in the configuration.
-- **Resolution Scaling**: Lower resolution processing can improve performance.
+3. **Monitoring**:
+   - View live feed on Home page
+   - Monitor entries/exits in real-time
+   - Check historical data in Reports
+
+4. **Door Configuration**:
+   - Use mouse to draw door area on video feed
+   - Set inside/outside directions
+   - Save configuration for persistent tracking
+
+## Development
+
+### Adding New Features
+
+1. Follow the modular structure in the `app` package
+2. Add routes to appropriate blueprints
+3. Include tests for new functionality
+4. Update documentation
+
+### Code Style
+
+- Follow PEP 8 guidelines
+- Use type hints where possible
+- Include docstrings for functions and classes
+- Add logging for important operations
 
 ## Troubleshooting
-- **Laggy Video Feed**: If the video feed is laggy, try reducing the frame resolution, skipping frames, or using a lighter object detection model like YOLOv5.
-- **CUDA Out of Memory**: Reduce batch size or input resolution if encountering GPU memory issues.
-- **Model Performance**: If using a CPU, object detection models may be slower. Consider using a GPU if available.
-- **Error with Camera Feed**: Ensure the camera is properly connected and the stream URL is correct.
+
+### Common Issues
+
+1. **Video Feed Issues**:
+   - Check camera connection
+   - Verify VIDEO_PATH in .env
+   - Ensure OpenCV installation is complete
+
+2. **Detection Performance**:
+   - Lower resolution for better performance
+   - Adjust FRAME_RATE in settings
+   - Enable GPU support if available
+
+3. **Firebase Connection**:
+   - Verify credentials file exists
+   - Check Firebase project settings
+   - Ensure proper permissions
 
 ## Contributing
 
-If you'd like to contribute to this project, feel free to fork the repository, make improvements, and submit a pull request.
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- PyTorch for the pre-trained models
+- Flask for the web framework
+- Firebase for data persistence

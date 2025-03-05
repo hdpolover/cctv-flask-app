@@ -1,0 +1,71 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Camera Settings - CCTV People Counter{% endblock %}
+
+{% block extra_head %}
+<script src="{{ url_for('static', filename='js/door-config.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="settings-container">
+    <h1>Camera Settings</h1>
+    <form action="{{ url_for('main.camera_settings') }}" method="POST">
+        <div class="input-group">
+            <label for="camera-url">Camera Stream URL</label>
+            <input type="text" id="camera-url" name="camera_url" value="{{ settings.camera_url if settings else '0' }}" required>
+        </div>
+        <div class="input-group">
+            <label for="frame-rate">Frame Rate</label>
+            <input type="number" id="frame-rate" name="frame_rate" value="{{ settings.frame_rate if settings else 30 }}" required>
+        </div>
+        <div class="input-group">
+            <label for="resolution">Resolution (format: width,height)</label>
+            <input type="text" id="resolution" name="resolution" value="{{ settings.resolution if settings else '640,480' }}" required>
+        </div>
+        <button type="submit">Update Camera</button>
+    </form>
+
+    <h2 class="mt-4">Door Area Configuration</h2>
+    <div class="door-config">
+        <div class="video-container">
+            <div id="video-wrapper" style="position: relative;">
+                <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Video Feed" style="cursor: crosshair;">
+                <div id="selection-box" style="position: absolute; border: 2px dashed red; display: none;"></div>
+            </div>
+        </div>
+        
+        <div class="door-settings">
+            <div class="coordinates">
+                <p>Click and drag on the video to define the door area.</p>
+                <div class="input-group">
+                    <label for="x1">X1:</label>
+                    <input type="number" id="x1" value="{{ door_area.x1 if door_area else '' }}" readonly>
+                </div>
+                <div class="input-group">
+                    <label for="y1">Y1:</label>
+                    <input type="number" id="y1" value="{{ door_area.y1 if door_area else '' }}" readonly>
+                </div>
+                <div class="input-group">
+                    <label for="x2">X2:</label>
+                    <input type="number" id="x2" value="{{ door_area.x2 if door_area else '' }}" readonly>
+                </div>
+                <div class="input-group">
+                    <label for="y2">Y2:</label>
+                    <input type="number" id="y2" value="{{ door_area.y2 if door_area else '' }}" readonly>
+                </div>
+                
+                <div class="input-group">
+                    <label for="inside-direction">Inside Direction:</label>
+                    <select id="inside-direction">
+                        <option value="right" {% if inside_direction == 'right' %}selected{% endif %}>Right Side</option>
+                        <option value="left" {% if inside_direction == 'left' %}selected{% endif %}>Left Side</option>
+                    </select>
+                </div>
+                
+                <button id="save-door" type="button" class="btn-primary">Save Door Area</button>
+                <div id="door-status" class="mt-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

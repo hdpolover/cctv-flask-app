@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}500 Server Error - CCTV People Counter{% endblock %}
+
+{% block content %}
+<div class="error-container">
+    <h1>500 - Server Error</h1>
+    <p>Something went wrong on our end. Please try again later.</p>
+    <a href="{{ url_for('main.home') }}" class="btn-primary">Return to Home</a>
+</div>
+
+<style>
+.error-container {
+    text-align: center;
+    padding: 4rem 1rem;
+}
+
+.error-container h1 {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    color: var(--danger-color);
+}
+
+.error-container p {
+    font-size: 1.2rem;
+    margin-bottom: 2rem;
+    color: var(--secondary-color);
+}
+</style>
+{% endblock %}
