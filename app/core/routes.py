@@ -1,7 +1,7 @@
 """
 Main application routes for web interface
 """
-from flask import Blueprint, render_template, redirect, url_for, request, Response, current_app
+from flask import Blueprint, render_template, redirect, url_for, request, Response, current_app, session, flash
 import threading
 import logging
 
@@ -20,21 +20,33 @@ main_bp = Blueprint('main', __name__)
 detection_model = None
 video_service = None
 
-@main_bp.before_app_first_request
 def initialize_services():
     """Initialize shared services before first request."""
     global detection_model, video_service
     
+    # Get settings from database
+    settings = fetch_camera_settings()
+    
     # Initialize detection model if not already done
     if detection_model is None:
-        detection_model = DetectionModel(current_app.config)
+        # Create config with settings
+        config = current_app.config.copy()
+        # Add GPU preference from settings if available
+        if settings and 'use_gpu' in settings:
+            config['USE_GPU'] = settings['use_gpu']
+            
+        detection_model = DetectionModel(config)
         logger.info("Detection model initialized")
     
     # Initialize video service if not already done
     if video_service is None:
-        # Get camera settings from config or database
-        settings = fetch_camera_settings()
-        video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+        # Get camera settings
+        video_source = settings.get('video_source', 'camera')
+        if video_source == 'demo':
+            video_path = 'app/static/videos/demo.mp4'
+        else:
+            video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+            
         frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
         
         # Parse resolution
@@ -69,6 +81,13 @@ def initialize_services():
             except Exception as e:
                 logger.error(f"Error setting door area: {e}")
 
+# Register initialization function to run before first request
+@main_bp.before_app_request
+def initialize_before_request():
+    """Initialize services if not already initialized."""
+    if detection_model is None or video_service is None:
+        initialize_services()
+
 @main_bp.route('/')
 def index():
     """Landing page route."""
@@ -76,12 +95,15 @@ def index():
 
 @main_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    """Handle login form."""
-    # For simplicity, just redirect to dashboard
-    # In a real app, you'd validate credentials here
     if request.method == 'POST':
-        # Process login attempt
-        return redirect(url_for('main.home'))
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username == 'admin' and password == 'admin123':
+            # Set session variables to mark user as logged in
+            session['logged_in'] = True
+            return redirect(url_for('main.home'))
+        else:
+            flash('Invalid username or password')
     return render_template('login.html')
 
 @main_bp.route('/home')
@@ -131,10 +153,22 @@ def camera_settings():
         initialize_services()
     
     if request.method == 'POST':
-        # Get settings from form
-        camera_url = request.form['camera_url']
-        frame_rate = int(request.form['frame_rate'])
-        resolution_str = request.form['resolution']
+        # Get video source setting
+        video_source = request.form.get('video_source', 'camera')
+        
+        if video_source == 'demo':
+            # Use demo video with default settings
+            video_path = 'app/static/videos/demo.mp4'
+            # Use default or existing settings for frame rate and resolution
+            settings = fetch_camera_settings()
+            frame_rate = int(settings.get('frame_rate', 30))
+            resolution_str = settings.get('resolution', '640,480')
+        else:
+            # Use camera settings from form
+            camera_url = request.form.get('camera_url', '0')
+            frame_rate = int(request.form.get('frame_rate', 30))
+            resolution_str = request.form.get('resolution', '640,480')
+            video_path = camera_url
         
         # Parse resolution
         if ',' in resolution_str:
@@ -145,18 +179,33 @@ def camera_settings():
 
         # Update video service
         if video_service:
-            video_service.update_settings(camera_url, frame_rate, resolution)
-
-        # Save settings to database
-        save_camera_settings(camera_url=camera_url, 
-                             frame_rate=frame_rate, 
-                             resolution=resolution_str)
+            video_service.update_settings(video_path, frame_rate, resolution)        # Prepare settings to save
+        save_data = {
+            'video_source': video_source,
+            'frame_rate': frame_rate,
+            'resolution': resolution_str
+        }
         
-        logger.info(f"Camera settings updated: {camera_url}, {frame_rate}, {resolution}")
-        return redirect(url_for('main.camera_settings'))
-
-    # Get current settings
+        # Add camera-specific settings
+        if video_source == 'camera':
+            save_data['camera_url'] = camera_url
+        else:  # demo mode
+            save_data['camera_url'] = video_path  # Save the demo video path
+            
+        # Save all settings
+        save_camera_settings(**save_data)
+        
+        logger.info(f"Saved camera settings: {save_data}")
+        
+        logger.info(f"Camera settings updated: source={video_source}, path={video_path}")
+        return redirect(url_for('main.camera_settings'))    # Get current settings
     settings = fetch_camera_settings()
+    if settings is None:
+        settings = {}
+    
+    # Ensure video_source is set in settings
+    if 'video_source' not in settings:
+        settings['video_source'] = 'camera'  # default value
     
     # Get door settings
     door_area = None
@@ -173,7 +222,8 @@ def camera_settings():
     return render_template('camera-settings.html', 
                           settings=settings,
                           door_area=door_area,
-                          inside_direction=inside_direction)
+                          inside_direction=inside_direction,
+                          cuda_available=detection_model.cuda_available)
 
 @main_bp.route('/reports')
 def reports():
@@ -181,3 +231,23 @@ def reports():
     from app.core.firebase_client import get_people_count_logs
     logs = get_people_count_logs(limit=100)
     return render_template('reports.html', logs=logs)
+
+@main_bp.route('/toggle-processing-device', methods=['POST'])
+def toggle_processing_device():
+    """Toggle between CPU and GPU processing."""
+    global detection_model
+    
+    if not detection_model:
+        return {'success': False, 'error': 'Detection model not initialized'}
+    
+    # Get the use_gpu value from the request
+    use_gpu = request.json.get('use_gpu', True)
+    
+    # Update the model's processing device
+    result = detection_model.set_processing_device(use_gpu)
+    
+    # Save the setting to the database
+    save_camera_settings(use_gpu=use_gpu)
+    
+    # Return device information
+    return result

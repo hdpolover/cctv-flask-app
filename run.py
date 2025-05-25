@@ -38,13 +38,12 @@ def setup_logging(app):
     root_logger.setLevel(log_level)
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
-    
-    # Configure Flask logger
+      # Configure Flask logger
     app.logger.handlers = []
     app.logger.propagate = True
     
     # Log startup message
-    app.logger.info(f"Starting application in {app.config['ENV']} mode")
+    app.logger.info(f"Starting application")
 
 # Create and configure app
 def create_app():

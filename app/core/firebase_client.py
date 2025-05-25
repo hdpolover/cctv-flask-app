@@ -18,14 +18,34 @@ def init_firebase():
     """
     global db
     if not firebase_admin._apps:
-        cred_path = current_app.config.get('FIREBASE_CREDS_PATH') if current_app else os.getenv('FIREBASE_CREDS_PATH')
-        if cred_path and os.path.exists(cred_path):
+        # Try several locations for the credentials file
+        possible_paths = [
+            current_app.config.get('FIREBASE_CREDS_PATH') if current_app else None,
+            os.getenv('FIREBASE_CREDS_PATH'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'cctv-app-flask-firebase-adminsdk-xdxtx-8e5ea88cd9.json')
+        ]
+        
+        cred_path = None
+        for path in possible_paths:
+            if path and os.path.exists(path):
+                cred_path = path
+                break
+        
+        if cred_path:
+            print(f"Using Firebase credentials from: {cred_path}")
             cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred)
         else:
-            raise FileNotFoundError(f"Firebase credentials file not found at: {cred_path}")
+            print("WARNING: Firebase credentials file not found. Some features will be disabled.")
+            # Initialize Firebase with a dummy configuration to prevent errors
+            firebase_admin.initialize_app()
     
-    db = firestore.client()
+    try:
+        db = firestore.client()
+    except Exception as e:
+        print(f"Error connecting to Firestore: {e}")
+        db = None
+    
     return db
 
 def get_db():
@@ -40,7 +60,7 @@ def get_db():
     return db
 
 def save_camera_settings(camera_url=None, frame_rate=None, resolution=None, 
-                         door_area=None, inside_direction=None):
+                         door_area=None, inside_direction=None, video_source=None, use_gpu=None):
     """Save camera settings to Firestore.
     
     Args:
@@ -48,7 +68,9 @@ def save_camera_settings(camera_url=None, frame_rate=None, resolution=None,
         frame_rate: The frame rate for video capture
         resolution: The resolution as tuple (width, height)
         door_area: The door area as dict with x1, y1, x2, y2 keys
-        inside_direction: Which side of the door is 'inside' ("left" or "right")
+        inside_direction: Which side of the door is 'inside' ("left", "right", "up", or "down")
+        video_source: Source of video ("camera" or "demo")
+        use_gpu: Whether to use GPU acceleration if available
     """
     db_client = get_db()
     settings_ref = db_client.collection("camera_settings").document("settings")
@@ -67,6 +89,10 @@ def save_camera_settings(camera_url=None, frame_rate=None, resolution=None,
         current_settings["door_area"] = door_area
     if inside_direction is not None:
         current_settings["inside_direction"] = inside_direction
+    if video_source is not None:
+        current_settings["video_source"] = video_source
+    if use_gpu is not None:
+        current_settings["use_gpu"] = use_gpu
 
     # Always update timestamp
     current_settings["last_updated"] = firestore.SERVER_TIMESTAMP

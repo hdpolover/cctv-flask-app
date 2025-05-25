@@ -18,76 +18,119 @@ class DoorAreaConfig {
         this.saveDoorBtn = document.getElementById('save-door');
         this.doorStatus = document.getElementById('door-status');
         this.insideDirection = document.getElementById('inside-direction');
+        
+        // Log elements to help debugging
+        console.log("Elements found:");
+        console.log("Video feed:", this.videoFeed);
+        console.log("Selection box:", this.selectionBox);
+        console.log("Input fields:", this.x1Input, this.y1Input, this.x2Input, this.y2Input);
+        console.log("Save button:", this.saveDoorBtn);
     }
 
     setupEventListeners() {
-        if (!this.videoFeed) return;
-
-        this.videoFeed.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        this.videoFeed.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        this.videoFeed.addEventListener('mouseup', this.handleMouseUp.bind(this));
+        if (!this.videoFeed) {
+            console.error("Video feed element not found!");
+            return;
+        }
         
+        if (!this.selectionBox) {
+            console.error("Selection box element not found!");
+            return;
+        }        // Use direct references to 'this' in event handlers
+        const self = this;
+        
+        this.videoFeed.onmousedown = function(e) {
+            // Prevent default browser behavior (drag, selection)
+            e.preventDefault();
+            
+            console.log("Mouse down event");
+            const rect = self.videoFeed.getBoundingClientRect();
+            self.startX = e.clientX - rect.left;
+            self.startY = e.clientY - rect.top;
+            self.isSelecting = true;
+
+            // Initialize selection box
+            self.selectionBox.style.display = 'block';
+            self.selectionBox.style.left = self.startX + 'px';
+            self.selectionBox.style.top = self.startY + 'px';
+            self.selectionBox.style.width = '0px';
+            self.selectionBox.style.height = '0px';
+
+            self.x1Input.value = Math.round(self.startX);
+            self.y1Input.value = Math.round(self.startY);
+        };
+
+        this.videoFeed.onmousemove = function(e) {
+            if (!self.isSelecting) return;
+            
+            console.log("Mouse move while selecting");
+            const rect = self.videoFeed.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+
+            // Calculate dimensions
+            const width = currentX - self.startX;
+            const height = currentY - self.startY;
+
+            // Update selection box
+            if (width < 0) {
+                self.selectionBox.style.left = currentX + 'px';
+                self.selectionBox.style.width = Math.abs(width) + 'px';
+                self.x1Input.value = Math.round(currentX);
+                self.x2Input.value = Math.round(self.startX);
+            } else {
+                self.selectionBox.style.left = self.startX + 'px';
+                self.selectionBox.style.width = width + 'px';
+                self.x1Input.value = Math.round(self.startX);
+                self.x2Input.value = Math.round(currentX);
+            }
+
+            if (height < 0) {
+                self.selectionBox.style.top = currentY + 'px';
+                self.selectionBox.style.height = Math.abs(height) + 'px';
+                self.y1Input.value = Math.round(currentY);
+                self.y2Input.value = Math.round(self.startY);
+            } else {
+                self.selectionBox.style.top = self.startY + 'px';
+                self.selectionBox.style.height = height + 'px';
+                self.y1Input.value = Math.round(self.startY);
+                self.y2Input.value = Math.round(currentY);
+            }
+        };
+
+        this.videoFeed.onmouseup = function(e) {
+            if (!self.isSelecting) return;
+            console.log("Mouse up event - ending selection");
+            
+            // Stop the selection process
+            self.isSelecting = false;
+            
+            // Make sure we have valid coordinates
+            const x1 = parseInt(self.x1Input.value);
+            const y1 = parseInt(self.y1Input.value);
+            const x2 = parseInt(self.x2Input.value);
+            const y2 = parseInt(self.y2Input.value);
+            
+            console.log("Final coordinates:", x1, y1, x2, y2);
+            
+            // Validate that we have a proper area
+            if (Math.abs(x2 - x1) < 10 || Math.abs(y2 - y1) < 10) {
+                self.updateStatus('Door area too small. Please draw a larger area.', 'error');
+                return;
+            }
+            
+            self.updateStatus('Door area defined. Click "Save Door Area" to save.', 'success');
+        };
+
+        // Also handle mouse leave
+        this.videoFeed.onmouseleave = this.videoFeed.onmouseup;
+        
+        // Handle save button
         if (this.saveDoorBtn) {
-            this.saveDoorBtn.addEventListener('click', this.saveDoorArea.bind(this));
+            this.saveDoorBtn.onclick = function() {
+                self.saveDoorArea();
+            };
         }
-    }
-
-    handleMouseDown(e) {
-        const rect = this.videoFeed.getBoundingClientRect();
-        this.startX = e.clientX - rect.left;
-        this.startY = e.clientY - rect.top;
-        this.isSelecting = true;
-
-        // Initialize selection box
-        this.selectionBox.style.display = 'block';
-        this.selectionBox.style.left = this.startX + 'px';
-        this.selectionBox.style.top = this.startY + 'px';
-        this.selectionBox.style.width = '0px';
-        this.selectionBox.style.height = '0px';
-
-        this.x1Input.value = Math.round(this.startX);
-        this.y1Input.value = Math.round(this.startY);
-    }
-
-    handleMouseMove(e) {
-        if (!this.isSelecting) return;
-
-        const rect = this.videoFeed.getBoundingClientRect();
-        const currentX = e.clientX - rect.left;
-        const currentY = e.clientY - rect.top;
-
-        // Calculate dimensions
-        const width = currentX - this.startX;
-        const height = currentY - this.startY;
-
-        // Update selection box
-        if (width < 0) {
-            this.selectionBox.style.left = currentX + 'px';
-            this.selectionBox.style.width = Math.abs(width) + 'px';
-            this.x1Input.value = Math.round(currentX);
-            this.x2Input.value = Math.round(this.startX);
-        } else {
-            this.selectionBox.style.left = this.startX + 'px';
-            this.selectionBox.style.width = width + 'px';
-            this.x1Input.value = Math.round(this.startX);
-            this.x2Input.value = Math.round(currentX);
-        }
-
-        if (height < 0) {
-            this.selectionBox.style.top = currentY + 'px';
-            this.selectionBox.style.height = Math.abs(height) + 'px';
-            this.y1Input.value = Math.round(currentY);
-            this.y2Input.value = Math.round(this.startY);
-        } else {
-            this.selectionBox.style.top = this.startY + 'px';
-            this.selectionBox.style.height = height + 'px';
-            this.y1Input.value = Math.round(this.startY);
-            this.y2Input.value = Math.round(currentY);
-        }
-    }
-
-    handleMouseUp() {
-        this.isSelecting = false;
     }
 
     loadExistingConfig() {
@@ -137,17 +180,17 @@ class DoorAreaConfig {
             },
             body: JSON.stringify(data)
         })
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                this.updateStatus(result.message, 'success');
-            } else {
-                this.updateStatus(result.message, 'error');
-            }
-        })
-        .catch(error => {
-            this.updateStatus('Error: ' + error.message, 'error');
-        });
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    this.updateStatus(result.message, 'success');
+                } else {
+                    this.updateStatus(result.message, 'error');
+                }
+            })
+            .catch(error => {
+                this.updateStatus('Error: ' + error.message, 'error');
+            });
     }
 
     updateStatus(message, type) {

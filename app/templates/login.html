@@ -5,6 +5,9 @@
 {% block content %}
 <div class="login-container">
     <h2>Login to CCTV App</h2>
+    
+    {% include 'components/flash.html' %}
+    
     <form action="{{ url_for('main.login') }}" method="POST">
         <div class="input-group">
             <label for="username">Username</label>

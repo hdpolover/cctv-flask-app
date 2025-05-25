@@ -6,6 +6,7 @@ import time
 import base64
 import threading
 import logging
+import os
 from flask import current_app
 
 # Configure logging
@@ -40,6 +41,11 @@ class VideoService:
         # Frame cache
         self.current_frame = None
         self.last_processed_time = 0
+        
+        # FPS calculation
+        self.fps = 0
+        self.frame_times = []
+        self.max_frame_samples = 30  # Number of frames to average for FPS
     
     def _initialize_capture(self):
         """Initialize the video capture object.
@@ -48,11 +54,18 @@ class VideoService:
             OpenCV VideoCapture object
         """
         try:
-            # Check if path is a number (camera index)
+            # Initialize cap to None to avoid reference before assignment issues
+            cap = None
+            
+            # Convert string digit path to integer
             if isinstance(self.video_path, str) and self.video_path.isdigit():
                 self.video_path = int(self.video_path)
-                
-            cap = cv2.VideoCapture(self.video_path)
+            
+            # Initialize capture - use DirectShow on Windows for better performance
+            if isinstance(self.video_path, int):
+                cap = cv2.VideoCapture(self.video_path, cv2.CAP_DSHOW)
+            else:  # Handle file paths or URLs
+                cap = cv2.VideoCapture(self.video_path)
             
             # Check if camera opened successfully
             if not cap.isOpened():
@@ -60,13 +73,24 @@ class VideoService:
                 # Try to use default camera as fallback
                 if self.video_path != 0:
                     logger.info("Attempting to open default camera instead")
-                    cap = cv2.VideoCapture(0)
+                    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+                    if not cap.isOpened():
+                        raise RuntimeError("Failed to open default camera as fallback")
+            
+            # Set camera buffer size to minimum to reduce latency
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # Set capture properties for performance
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+            cap.set(cv2.CAP_PROP_FPS, self.frame_rate)
             
             logger.info(f"Video capture initialized with source: {self.video_path}")
             return cap
         
         except Exception as e:
             logger.exception(f"Error initializing video capture: {e}")
+            # Create a fresh capture as fallback
             return cv2.VideoCapture(0)  # Fallback to default camera
     
     def update_settings(self, video_path=None, frame_rate=None, resolution=None):
@@ -106,13 +130,36 @@ class VideoService:
         if self.current_frame is not None:
             return self.current_frame
             
+        # Check if we need to skip frames to catch up
+        current_time = time.time()
+        time_since_last = current_time - self.last_processed_time
+        frames_to_skip = int(time_since_last * self.frame_rate) - 1
+        
+        # Skip frames if we're falling behind
+        if frames_to_skip > 0:
+            for _ in range(frames_to_skip):
+                self.cap.grab()  # Just grab frame, don't decode
+            logger.debug(f"Skipped {frames_to_skip} frames to catch up")
+        
         success, frame = self.cap.read()
         if not success:
             logger.warning("Failed to read frame from video source")
             return None
         
-        # Resize frame to target resolution
-        return cv2.resize(frame, self.resolution)
+        # Use CUDA-enabled resize if available
+        try:
+            if hasattr(cv2, 'cuda') and cv2.cuda.getCudaEnabledDeviceCount() > 0:
+                gpu_frame = cv2.cuda_GpuMat()
+                gpu_frame.upload(frame)
+                gpu_frame = cv2.cuda.resize(gpu_frame, self.resolution)
+                frame = gpu_frame.download()
+            else:
+                frame = cv2.resize(frame, self.resolution)
+        except Exception as e:
+            frame = cv2.resize(frame, self.resolution)
+            
+        self.last_processed_time = current_time
+        return frame
     
     def process_frame(self, frame):
         """Process a single frame with people detection.
@@ -127,8 +174,31 @@ class VideoService:
             return None
             
         try:
+            # Start frame processing time measurement
+            frame_start_time = time.time()
+            
+            # Check if we should process this frame
+            current_time = time.time()
+            if current_time - self.last_processed_time < 1.0 / self.frame_rate:
+                return frame  # Skip processing if we're ahead of schedule
+            
             # Detect people in the frame
             people_boxes, movement = self.detection_model.detect_people(frame)
+            
+            # Calculate FPS
+            frame_end_time = time.time()
+            process_time = frame_end_time - frame_start_time
+            self.last_processed_time = current_time
+            
+            # Update FPS calculation
+            self.frame_times.append(process_time)
+            if len(self.frame_times) > self.max_frame_samples:
+                self.frame_times.pop(0)  # Remove oldest frame time
+            
+            # Calculate average FPS from frame times
+            if self.frame_times:
+                avg_process_time = sum(self.frame_times) / len(self.frame_times)
+                self.fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
             
             # Draw detection boxes
             for box in people_boxes:
@@ -138,22 +208,37 @@ class VideoService:
             if self.detection_model.door_defined and self.detection_model.door_area:
                 x1, y1, x2, y2 = self.detection_model.door_area
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                
-                # Draw door center line
+                  # Draw door center line
                 door_center_x = int((x1 + x2) / 2)
+                door_center_y = int((y1 + y2) / 2)
+                
+                # Draw vertical center line
                 cv2.line(frame, (door_center_x, y1), (door_center_x, y2), (255, 0, 0), 2)
                 
-                # Label inside/outside directions
+                # Draw horizontal center line
+                cv2.line(frame, (x1, door_center_y), (x2, door_center_y), (255, 0, 0), 2)
+                
+                # Label inside/outside directions based on selected inside direction
                 if self.detection_model.inside_direction == "right":
-                    cv2.putText(frame, "Outside", (x1 - 80, y1 + 20), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    cv2.putText(frame, "Inside", (x2 + 10, y1 + 20), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                else:
-                    cv2.putText(frame, "Inside", (x1 - 80, y1 + 20), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    cv2.putText(frame, "Outside", (x2 + 10, y1 + 20), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    cv2.putText(frame, "Outside", (x1 - 80, door_center_y), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(frame, "Inside", (x2 + 10, door_center_y), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                elif self.detection_model.inside_direction == "left":
+                    cv2.putText(frame, "Inside", (x1 - 80, door_center_y), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(frame, "Outside", (x2 + 10, door_center_y), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                elif self.detection_model.inside_direction == "down":
+                    cv2.putText(frame, "Outside", (door_center_x - 30, y1 - 10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(frame, "Inside", (door_center_x - 30, y2 + 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                elif self.detection_model.inside_direction == "up":
+                    cv2.putText(frame, "Inside", (door_center_x - 30, y1 - 10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(frame, "Outside", (door_center_x - 30, y2 + 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             else:
                 # Draw center line if no door defined (fallback)
                 height, width = frame.shape[:2]
@@ -169,7 +254,43 @@ class VideoService:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, f"People in room: {people_in_room}", (10, 90), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                        
+              # Add processing mode and FPS information
+            height = frame.shape[0]
+            # Draw a semi-transparent background for better readability
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (5, height-130), (340, height-5), (0, 0, 0), -1)
+            alpha = 0.6  # Transparency factor
+            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+            
+            # Add processing mode text
+            device_type = "GPU" if self.detection_model.device.type == "cuda" else "CPU"
+            cv2.putText(frame, f"Processing: {device_type}", (10, height-100), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Add FPS counter
+            cv2.putText(frame, f"FPS: {self.fps:.1f}", (10, height-75), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Add detailed timing information if available
+            if hasattr(self.detection_model, 'last_timing'):
+                timing = self.detection_model.last_timing
+                
+                # Display inference time (model execution)
+                inference_ms = timing.get('inference', 0) * 1000
+                cv2.putText(frame, f"Inference: {inference_ms:.1f}ms", (10, height-50), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
+                # Display total time
+                total_ms = timing.get('total', 0) * 1000
+                cv2.putText(frame, f"Total: {total_ms:.1f}ms", (10, height-25), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
+                # Display inference percentage
+                if timing.get('total', 0) > 0:
+                    inference_percent = 100 * timing.get('inference', 0) / timing.get('total', 1)
+                    cv2.putText(frame, f"Inference: {inference_percent:.1f}%", (210, height-50), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
             return frame
             
         except Exception as e:
@@ -265,16 +386,33 @@ class VideoService:
         
         while self.is_running:
             try:
+                # Start timing for FPS calculation
+                frame_start_time = time.time()
+                
                 # Read a frame
                 success, frame = self.cap.read()
                 
                 if not success:
                     logger.warning("Failed to read frame from video source")
-                    # Attempt to reconnect if using a camera
-                    if isinstance(self.video_path, int) or (isinstance(self.video_path, str) and self.video_path.isdigit()):
+                    
+                    # Check if this is a file source (not a camera/device)
+                    is_file = not (isinstance(self.video_path, int) or 
+                                (isinstance(self.video_path, str) and self.video_path.isdigit()))
+                    
+                    # For video files: reopen the file to restart playback
+                    if is_file and isinstance(self.video_path, str) and os.path.exists(self.video_path):
+                        logger.info(f"Restarting video file: {self.video_path}")
+                        self.cap.release()
+                        self.cap = cv2.VideoCapture(self.video_path)
+                        if not self.cap.isOpened():
+                            logger.error(f"Failed to reopen video file: {self.video_path}")
+                    # For cameras: attempt to reconnect
+                    else:
+                        logger.info(f"Attempting to reconnect to camera: {self.video_path}")
                         self.cap.release()
                         self.cap = self._initialize_capture()
-                    time.sleep(1.0)
+                        
+                    time.sleep(0.5)  # Brief delay before retry
                     continue
                 
                 # Resize and store current frame
@@ -289,8 +427,20 @@ class VideoService:
                         frame_encoded = base64.b64encode(buffer).decode('utf-8')
                         self.socketio.emit('video_frame', frame_encoded)
                 
+                # Calculate and update FPS
+                frame_end_time = time.time()
+                process_time = frame_end_time - frame_start_time
+                self.frame_times.append(process_time)
+                if len(self.frame_times) > self.max_frame_samples:
+                    self.frame_times.pop(0)  # Remove oldest frame time
+                
+                # Calculate average FPS from frame times
+                if self.frame_times:
+                    avg_process_time = sum(self.frame_times) / len(self.frame_times)
+                    self.fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
+                
                 # Sleep to maintain frame rate
-                time.sleep(1.0 / self.frame_rate)
+                time.sleep(max(0, 1.0 / self.frame_rate - process_time))
                 
             except Exception as e:
                 logger.exception(f"Error in capture thread: {e}")
