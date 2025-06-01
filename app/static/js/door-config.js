@@ -6,6 +6,9 @@ class DoorAreaConfig {
         this.setupElements();
         this.setupEventListeners();
         this.loadExistingConfig();
+        
+        // Add door orientation detection
+        this.checkDoorOrientation = this.checkDoorOrientation.bind(this);
     }
 
     setupElements() {
@@ -111,15 +114,13 @@ class DoorAreaConfig {
             const x2 = parseInt(self.x2Input.value);
             const y2 = parseInt(self.y2Input.value);
             
-            console.log("Final coordinates:", x1, y1, x2, y2);
-            
-            // Validate that we have a proper area
+            console.log("Final coordinates:", x1, y1, x2, y2);            // Validate that we have a proper area
             if (Math.abs(x2 - x1) < 10 || Math.abs(y2 - y1) < 10) {
-                self.updateStatus('Door area too small. Please draw a larger area.', 'error');
+                self.updateStatus('Area pintu terlalu kecil. Silakan gambar area yang lebih besar.', 'error');
                 return;
             }
             
-            self.updateStatus('Door area defined. Click "Save Door Area" to save.', 'success');
+            self.updateStatus('Area pintu telah ditentukan. Klik "Simpan Area Pintu" untuk menyimpan.', 'success');
         };
 
         // Also handle mouse leave
@@ -150,21 +151,99 @@ class DoorAreaConfig {
                     this.selectionBox.style.top = data.y1 + 'px';
                     this.selectionBox.style.width = (data.x2 - data.x1) + 'px';
                     this.selectionBox.style.height = (data.y2 - data.y1) + 'px';
+                    
+                    // Check door orientation and show relevant tip
+                    this.checkDoorOrientation();
                 }
-            })
-            .catch(error => {
-                console.error('Error loading door configuration:', error);
             });
+    }    checkDoorOrientation() {
+        if (!this.x1Input.value || !this.y1Input.value || !this.x2Input.value || !this.y2Input.value) {
+            return;
+        }
+        
+        const width = Math.abs(parseInt(this.x2Input.value) - parseInt(this.x1Input.value));
+        const height = Math.abs(parseInt(this.y2Input.value) - parseInt(this.y1Input.value));
+        const orientationInfo = document.getElementById('door-orientation-info');
+        
+        if (height > width) {
+            // Vertical door detected
+            orientationInfo.style.display = 'flex';
+            // Add direction arrows if they don't exist
+            this.showDirectionIndicators('vertical');
+        } else {
+            // Horizontal door
+            orientationInfo.style.display = 'none';
+            this.showDirectionIndicators('horizontal');
+        }
     }
-
-    saveDoorArea() {
+    
+    showDirectionIndicators(orientation) {
+        // Remove any existing indicators
+        const existingArrows = document.querySelectorAll('.direction-arrow');
+        existingArrows.forEach(arrow => arrow.remove());
+        
+        if (!this.selectionBox || this.selectionBox.style.display === 'none') {
+            return;
+        }
+        
+        const x1 = parseInt(this.x1Input.value);
+        const y1 = parseInt(this.y1Input.value);
+        const x2 = parseInt(this.x2Input.value);
+        const y2 = parseInt(this.y2Input.value);
+        
+        // Create container for arrows
+        const arrowContainer = document.createElement('div');
+        arrowContainer.className = 'direction-arrow';
+        document.getElementById('video-wrapper').appendChild(arrowContainer);
+        
+        if (orientation === 'vertical') {
+            // For vertical doors, place arrows on left and right sides
+            const leftArrow = document.createElement('div');
+            leftArrow.className = 'arrow left-arrow';
+            leftArrow.innerHTML = '◀';
+            leftArrow.style.top = ((y1 + y2) / 2) + 'px';
+            leftArrow.style.left = (x1 - 30) + 'px';
+            leftArrow.title = 'Arah kiri dianggap dalam ruangan jika dipilih "Sisi Kiri"';
+            
+            const rightArrow = document.createElement('div');
+            rightArrow.className = 'arrow right-arrow';
+            rightArrow.innerHTML = '▶';
+            rightArrow.style.top = ((y1 + y2) / 2) + 'px';
+            rightArrow.style.left = (x2 + 10) + 'px';
+            rightArrow.title = 'Arah kanan dianggap dalam ruangan jika dipilih "Sisi Kanan"';
+            
+            arrowContainer.appendChild(leftArrow);
+            arrowContainer.appendChild(rightArrow);
+        } else {
+            // For horizontal doors, place arrows on top and bottom
+            const topArrow = document.createElement('div');
+            topArrow.className = 'arrow top-arrow';
+            topArrow.innerHTML = '▲';
+            topArrow.style.top = (y1 - 30) + 'px';
+            topArrow.style.left = ((x1 + x2) / 2) + 'px';
+            topArrow.title = 'Arah atas dianggap dalam ruangan jika dipilih "Sisi Atas"';
+            
+            const bottomArrow = document.createElement('div');
+            bottomArrow.className = 'arrow bottom-arrow';
+            bottomArrow.innerHTML = '▼';
+            bottomArrow.style.top = (y2 + 10) + 'px';
+            bottomArrow.style.left = ((x1 + x2) / 2) + 'px';
+            bottomArrow.title = 'Arah bawah dianggap dalam ruangan jika dipilih "Sisi Bawah"';
+            
+            arrowContainer.appendChild(topArrow);
+            arrowContainer.appendChild(bottomArrow);
+        }
+    }
+    
+    saveDoorArea(callback) {
         const x1 = parseInt(this.x1Input.value);
         const y1 = parseInt(this.y1Input.value);
         const x2 = parseInt(this.x2Input.value);
         const y2 = parseInt(this.y2Input.value);
 
         if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
-            this.updateStatus('Please draw a door area first', 'error');
+            this.updateStatus('Silakan gambar area pintu terlebih dahulu', 'error');
+            if (callback) callback(false, 'Silakan gambar area pintu terlebih dahulu');
             return;
         }
 
@@ -184,12 +263,37 @@ class DoorAreaConfig {
             .then(result => {
                 if (result.success) {
                     this.updateStatus(result.message, 'success');
+                    
+                    // Check if we have a modal function available from the parent page
+                    if (typeof showSuccessDoorModal === 'function') {
+                        // Use modal display
+                        showSuccessDoorModal(data);
+                    } else if (typeof showToast === 'function') {
+                        // Use toast notification if available
+                        showToast('✅ ' + result.message, 'success');
+                    }
+                    
+                    if (callback) callback(true, result.message);
                 } else {
                     this.updateStatus(result.message, 'error');
+                    
+                    // Use toast for error if available
+                    if (typeof showToast === 'function') {
+                        showToast('❌ ' + result.message, 'error');
+                    }
+                    
+                    if (callback) callback(false, result.message);
                 }
             })
             .catch(error => {
                 this.updateStatus('Error: ' + error.message, 'error');
+                
+                // Use toast for error if available
+                if (typeof showToast === 'function') {
+                    showToast('❌ Error: ' + error.message, 'error');
+                }
+                
+                if (callback) callback(false, error.message);
             });
     }
 
@@ -205,5 +309,14 @@ class DoorAreaConfig {
 document.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('video-feed')) {
         new DoorAreaConfig();
+    }
+});
+
+// Create a new doorConfig instance when script is loaded
+let doorAreaInstance = null;
+document.addEventListener('DOMContentLoaded', function() {
+    // Create a global doorAreaConfig instance if the video feed exists
+    if (document.getElementById('video-feed')) {
+        doorAreaInstance = new DoorAreaConfig();
     }
 });

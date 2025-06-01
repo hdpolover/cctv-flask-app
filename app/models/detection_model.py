@@ -141,13 +141,12 @@ class DetectionModel:
     def get_box_center(self, box):
         """Calculate center point of bounding box.
         
-        Args:
-            box: Bounding box coordinates [x1, y1, x2, y2]
+        Args:            box: Bounding box coordinates [x1, y1, x2, y2]
             
         Returns:
             (center_x, center_y) coordinates
-        """
-        return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)    
+        """        
+        return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
     
     def is_crossing_door(self, prev_center, current_center):
         """Determine if a person is crossing the door area.
@@ -164,24 +163,63 @@ class DetectionModel:
             return False, None
             
         x1, y1, x2, y2 = self.door_area
-        door_center_x = (x1 + x2) / 2
-        door_center_y = (y1 + y2) / 2
+        door_width = x2 - x1
+        door_height = y2 - y1
         
         # Calculate if the person was on either side of door before and after
         prev_x, prev_y = prev_center
         curr_x, curr_y = current_center
         
-        # Check if person crossed the horizontal center line
-        if (prev_x < door_center_x and curr_x >= door_center_x):
-            return True, "left_to_right"
-        elif (prev_x >= door_center_x and curr_x < door_center_x):
-            return True, "right_to_left"
+        # Determine door orientation based on aspect ratio
+        is_vertical_door = door_height > door_width
         
-        # Check if person crossed the vertical center line
-        if (prev_y < door_center_y and curr_y >= door_center_y):
-            return True, "top_to_bottom"
-        elif (prev_y >= door_center_y and curr_y < door_center_y):
-            return True, "bottom_to_top"
+        if is_vertical_door:
+            # For vertical doors, use zones instead of center line
+            # Create detection zones with buffer for more reliable detection
+            zone_width = door_width * 0.3  # 30% of door width for each zone
+            left_zone_right = x1 + zone_width
+            right_zone_left = x2 - zone_width
+            
+            # Check if both positions are within the door height range
+            if (y1 <= prev_y <= y2) or (y1 <= curr_y <= y2):
+                # Left to right crossing: was in left zone, now in right zone or beyond
+                if (prev_x <= left_zone_right and curr_x >= right_zone_left):
+                    return True, "left_to_right"
+                # Right to left crossing: was in right zone, now in left zone or beyond
+                elif (prev_x >= right_zone_left and curr_x <= left_zone_right):
+                    return True, "right_to_left"
+        else:
+            # For horizontal doors, use zones instead of center line
+            zone_height = door_height * 0.3  # 30% of door height for each zone
+            top_zone_bottom = y1 + zone_height
+            bottom_zone_top = y2 - zone_height
+            
+            # Check if both positions are within the door width range
+            if (x1 <= prev_x <= x2) or (x1 <= curr_x <= x2):
+                # Top to bottom crossing: was in top zone, now in bottom zone or beyond
+                if (prev_y <= top_zone_bottom and curr_y >= bottom_zone_top):
+                    return True, "top_to_bottom"
+                # Bottom to top crossing: was in bottom zone, now in top zone or beyond
+                elif (prev_y >= bottom_zone_top and curr_y <= top_zone_bottom):
+                    return True, "bottom_to_top"
+        
+        # Fallback to center line detection for edge cases
+        door_center_x = (x1 + x2) / 2
+        door_center_y = (y1 + y2) / 2
+        
+        # Check if person crossed the horizontal center line (with door area constraint)
+        if (y1 <= prev_y <= y2) and (y1 <= curr_y <= y2):
+            if (prev_x < door_center_x and curr_x >= door_center_x):
+                return True, "left_to_right"
+            elif (prev_x >= door_center_x and curr_x < door_center_x):
+                return True, "right_to_left"
+        
+        # Check if person crossed the vertical center line (with door area constraint)
+        if (x1 <= prev_x <= x2) and (x1 <= curr_x <= x2):
+            if (prev_y < door_center_y and curr_y >= door_center_y):
+                return True, "top_to_bottom"
+            elif (prev_y >= door_center_y and curr_y < door_center_y):
+                return True, "bottom_to_top"
         
         return False, None
 
@@ -469,3 +507,21 @@ class DetectionModel:
             "device": str(self.device),
             "cuda_available": self.cuda_available
         }
+    
+    def get_door_area(self):
+        """Get the current door area coordinates.
+        
+        Returns:
+            Tuple of (x1, y1, x2, y2) or None if not defined
+        """
+        if self.door_defined and self.door_area:
+            return self.door_area
+        return None
+    
+    def get_inside_direction(self):
+        """Get the current inside direction setting.
+        
+        Returns:
+            String indicating inside direction ("left", "right", "up", or "down")
+        """
+        return self.inside_direction

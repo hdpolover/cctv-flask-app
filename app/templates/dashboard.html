@@ -3,26 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
+    <title>Dashboard - CCTV Monitoring System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
 </head>
 <body>
-    <div class="container">        <!-- Sidebar -->
-        <div class="sidebar">
-            <h2>Dashboard</h2>
-            <ul>
-                <li><a href="{{ url_for('home') }}">Beranda</a></li>
-                <li><a href="{{ url_for('camera_settings') }}">Pengaturan Kamera</a></li>
-                <li><a href="{{ url_for('reports') }}">Laporan</a></li>
-            </ul>
-        </div>
+    <div class="dashboard-layout">
+        <!-- Modern Sidebar -->
+        <aside class="sidebar-modern">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">📹</span>
+                    <span class="logo-text">CCTV Monitor</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <a href="{{ url_for('home') }}" class="nav-link">
+                            <span class="nav-icon">🏠</span>
+                            <span class="nav-text">Beranda</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="{{ url_for('camera_settings') }}" class="nav-link">
+                            <span class="nav-icon">⚙️</span>
+                            <span class="nav-text">Pengaturan Kamera</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="{{ url_for('reports') }}" class="nav-link">
+                            <span class="nav-icon">📊</span>
+                            <span class="nav-text">Laporan</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
 
-        <!-- Content -->
-        <div class="content">
-            {% block content %}
-            <!-- Default content here, which will be replaced based on the selected menu -->
-            {% endblock %}
-        </div>
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <div class="content-wrapper">
+                {% block content %}
+                <div class="dashboard-welcome">
+                    <h1>Dashboard CCTV</h1>
+                    <p>Selamat datang di sistem monitoring CCTV. Pilih menu dari sidebar untuk memulai.</p>
+                </div>
+                {% endblock %}
+            </div>
+        </main>
     </div>
 </body>
 </html>

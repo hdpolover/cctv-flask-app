@@ -1,29 +1,111 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>Streaming WebRTC</title>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Streaming - CCTV Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-  </head>  <body>
-    <h1>Streaming WebRTC</h1>
-    <video id="video" autoplay playsinline></video>
+</head>
+<body class="streaming-page">
+    <div class="streaming-container">
+        <header class="streaming-header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">📹</span>
+                    <h1>Live Streaming CCTV</h1>
+                </div>
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Menghubungkan...</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="streaming-main">
+            <div class="video-container">
+                <video id="video" autoplay playsinline muted>
+                    <p>Browser Anda tidak mendukung video HTML5.</p>
+                </video>
+                <div class="video-overlay">
+                    <div class="video-controls">
+                        <button id="fullscreenBtn" class="control-btn" title="Fullscreen">
+                            <span>⛶</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="streaming-info">
+                <div class="info-card">
+                    <h3>Status Koneksi</h3>
+                    <p id="statusText">Menginisialisasi...</p>
+                </div>
+                <div class="info-card">
+                    <h3>Kualitas Stream</h3>
+                    <p id="qualityText">HD 720p</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
     <script>
-      const video = document.getElementById('video')
-      const socket = io()
-      
-      socket.on('video_frame', (frame) => {
-        const img = new Image()
-        img.src = 'data:image/jpeg;base64,' + frame
-        img.onload = () => {
-          video.srcObject = img
+        const video = document.getElementById('video');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const statusIndicator = connectionStatus.querySelector('.status-indicator');
+        const statusText = connectionStatus.querySelector('.status-text');
+        const statusTextElement = document.getElementById('statusText');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        
+        const socket = io();
+        
+        // Update connection status
+        function updateConnectionStatus(status, message) {
+            statusIndicator.className = `status-indicator status-${status}`;
+            statusText.textContent = message;
+            statusTextElement.textContent = message;
         }
-      })
+        
+        // Socket event handlers
+        socket.on('video_frame', (frame) => {
+            const img = new Image();
+            img.src = 'data:image/jpeg;base64,' + frame;
+            img.onload = () => {
+                video.srcObject = img;
+            };
+        });
+        
         socket.on('connect', () => {
-        console.log('Terhubung ke server')
-      })
-      
-      socket.on('disconnect', () => {
-        console.log('Terputus dari server')
-      })
+            console.log('Terhubung ke server');
+            updateConnectionStatus('connected', 'Terhubung');
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('Terputus dari server');
+            updateConnectionStatus('disconnected', 'Terputus');
+        });
+        
+        socket.on('connect_error', () => {
+            updateConnectionStatus('error', 'Error koneksi');
+        });
+        
+        // Fullscreen functionality
+        fullscreenBtn.addEventListener('click', () => {
+            if (video.requestFullscreen) {
+                video.requestFullscreen();
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.msRequestFullscreen) {
+                video.msRequestFullscreen();
+            }
+        });
+        
+        // Initialize
+        updateConnectionStatus('connecting', 'Menghubungkan...');
     </script>
-  </body>
+</body>
 </html>

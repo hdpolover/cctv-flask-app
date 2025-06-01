@@ -8,23 +8,73 @@
 
 {% block content %}
 <div class="home-container">
-    <h1>Live Feed CCTV</h1>
-    <div class="video-container">
-        <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Feed Video">
+    <div class="page-header">
+        <h1>Live Feed CCTV</h1>
+        <p>Sistem pemantauan dan penghitungan orang secara real-time</p>
     </div>
-    <div class="counter">
-        <h3>Penghitung Orang</h3>
-        <p id="people-count">Orang di ruangan: {{ people_in_room }}</p>
+    
+    <div class="video-details-container">
+        <div class="video-container">
+            <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Feed Video">
+        </div>
+        
+        <div class="video-details-card">
+            <h3>Detail Video</h3>
+            <div class="detail-item">
+                <span class="detail-label">Sumber Video:</span>
+                <span class="detail-value" id="video-source">{{ video_source|default('Camera') }}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Resolusi:</span>
+                <span class="detail-value" id="video-resolution">{{ resolution|default('640 x 480') }}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Frame Rate:</span>
+                <span class="detail-value" id="video-fps">{{ frame_rate|default('30') }} FPS</span>
+            </div>
+            {% if door_coordinates %}
+            <div class="detail-item">
+                <span class="detail-label">Koordinat Pintu:</span>
+                <span class="detail-value" id="door-coords">
+                    X1: {{ door_coordinates.x1 }}, Y1: {{ door_coordinates.y1 }}<br>
+                    X2: {{ door_coordinates.x2 }}, Y2: {{ door_coordinates.y2 }}
+                </span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Arah Masuk:</span>
+                <span class="detail-value" id="inside-direction">{{ inside_direction|default('Kanan') }}</span>
+            </div>
+            {% else %}
+            <div class="detail-item">
+                <span class="detail-label">Koordinat Pintu:</span>
+                <span class="detail-value warning-text">Tidak diatur</span>
+            </div>
+            {% endif %}            <div class="detail-item">
+                <span class="detail-label">Status:</span>
+                <span class="detail-value" id="connection-status">Menunggu koneksi...</span>
+            </div>
+        </div>
     </div>
-    <div class="movement-counter">
-        <h3>Penghitung Pergerakan</h3>
-        <p class="entries">Masuk: {{ entries }}</p>
-        <p class="exits">Keluar: {{ exits }}</p>
+    
+    <div class="stats-grid">
+        <div class="counter">
+            <h3>Penghitung Orang</h3>
+            <p id="people-count">{{ people_in_room }} Orang di ruangan</p>
+        </div>
+        
+        <div class="movement-counter">
+            <h3>Penghitung Pergerakan</h3>
+            <p class="entries">Masuk <span>{{ entries }}</span></p>
+            <p class="exits">Keluar <span>{{ exits }}</span></p>
+        </div>
     </div>
+    
     {% if not door_defined %}
     <div class="alert alert-warning">
-        <p>⚠️ Area pintu belum didefinisikan. Menggunakan garis tengah untuk deteksi.</p>
-        <p>Pergi ke <a href="{{ url_for('main.camera_settings') }}">Pengaturan Kamera</a> untuk mendefinisikan area pintu.</p>
+        <div>
+            <p><strong>Area pintu belum didefinisikan.</strong> Menggunakan garis tengah untuk deteksi.</p>
+            <p>Pergi ke <a href="{{ url_for('main.camera_settings') }}" style="color: var(--warning-color); font-weight: 600;">Pengaturan Kamera</a> untuk mendefinisikan area pintu.</p>
+        </div>
     </div>
     {% endif %}
 </div>

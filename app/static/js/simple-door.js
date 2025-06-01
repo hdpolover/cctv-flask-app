@@ -42,11 +42,10 @@ document.addEventListener('DOMContentLoaded', function() {
         selectionBox.style.width = '0px';
         selectionBox.style.height = '0px';
         
-        // Set inputs
-        if (x1Input) x1Input.value = Math.round(startX);
+        // Set inputs        if (x1Input) x1Input.value = Math.round(startX);
         if (y1Input) y1Input.value = Math.round(startY);
         
-        if (statusElem) statusElem.textContent = 'Drawing door area...';
+        if (statusElem) statusElem.textContent = 'Menggambar area pintu...';
     };
     
     videoFeed.onmousemove = function(e) {
@@ -93,13 +92,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const y1 = parseInt(y1Input.value);
         const x2 = parseInt(x2Input.value);
         const y2 = parseInt(y2Input.value);
-        
-        if (Math.abs(x2-x1) < 10 || Math.abs(y2-y1) < 10) {
-            if (statusElem) statusElem.textContent = 'Door area too small, please try again';
+          if (Math.abs(x2-x1) < 10 || Math.abs(y2-y1) < 10) {
+            if (statusElem) statusElem.textContent = 'Area pintu terlalu kecil, silakan coba lagi';
             return;
         }
         
-        if (statusElem) statusElem.textContent = 'Door area defined. Click Save Door Area to save.';
+        if (statusElem) statusElem.textContent = 'Area pintu telah ditentukan. Klik Simpan Area Pintu untuk menyimpan.';
     };
     
     // Same for mouse leave
@@ -112,9 +110,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const y1 = parseInt(y1Input.value);
             const x2 = parseInt(x2Input.value);
             const y2 = parseInt(y2Input.value);
-            
-            if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
-                if (statusElem) statusElem.textContent = 'Please define a door area first';
+              if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
+                if (statusElem) statusElem.textContent = 'Silakan tentukan area pintu terlebih dahulu';
                 return;
             }
             
@@ -139,15 +136,14 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(response => response.json())
             .then(result => {
-                console.log('Save result:', result);
-                if (statusElem) {
-                    statusElem.textContent = result.message || 'Door area saved';
+                console.log('Save result:', result);                if (statusElem) {
+                    statusElem.textContent = result.message || 'Area pintu berhasil disimpan';
                 }
             })
             .catch(error => {
                 console.error('Error saving door area:', error);
                 if (statusElem) {
-                    statusElem.textContent = 'Error saving door area: ' + error.message;
+                    statusElem.textContent = 'Gagal menyimpan area pintu: ' + error.message;
                 }
             });
         };

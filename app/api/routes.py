@@ -42,13 +42,12 @@ def set_door_area():
         if detection_model:
             detection_model.set_door_area(x1, y1, x2, y2)
             detection_model.set_inside_direction(inside_dir)
-            
-            # Save door settings to Firebase
+              # Save door settings to Firebase
             door_area = {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
             save_camera_settings(door_area=door_area, inside_direction=inside_dir)
             
             logger.info(f"Door area set via API: {door_area}, inside: {inside_dir}")
-            return jsonify({'success': True, 'message': 'Door area set successfully'})
+            return jsonify({'success': True, 'message': 'Area pintu berhasil dikonfigurasi'})
         else:
             logger.error("Detection model not initialized")
             return jsonify({'success': False, 'message': 'Detection model not initialized'}), 500
@@ -145,3 +144,115 @@ def get_logs():
                                limit=limit)
     
     return jsonify(logs)
+
+# New API routes for enhanced Firebase functionality
+
+@api_bp.route('/alerts', methods=['GET'])
+def get_alerts():
+    """Get system alerts with filtering options."""
+    from app.core.firebase_client import get_alerts
+    
+    alert_type = request.args.get('type')
+    severity = request.args.get('severity')
+    acknowledged = request.args.get('acknowledged')
+    limit = request.args.get('limit', 50, type=int)
+    
+    # Convert acknowledged string to boolean if provided
+    if acknowledged is not None:
+        acknowledged = acknowledged.lower() == 'true'
+    
+    alerts = get_alerts(
+        alert_type=alert_type,
+        severity=severity,
+        acknowledged=acknowledged,
+        limit=limit
+    )
+    
+    return jsonify(alerts)
+
+@api_bp.route('/alerts', methods=['POST'])
+def create_alert():
+    """Create a new alert."""
+    from app.core.firebase_client import save_alert
+    
+    try:
+        data = request.json
+        alert_type = data.get('type')
+        message = data.get('message')
+        severity = data.get('severity', 'info')
+        metadata = data.get('metadata')
+        
+        if not alert_type or not message:
+            return jsonify({'success': False, 'message': 'Type and message are required'}), 400
+        
+        alert_id = save_alert(alert_type, message, severity, metadata)
+        
+        return jsonify({'success': True, 'alert_id': alert_id})
+    except Exception as e:
+        logger.exception(f"Error creating alert: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 400
+
+@api_bp.route('/alerts/<alert_id>/acknowledge', methods=['POST'])
+def acknowledge_alert(alert_id):
+    """Acknowledge an alert."""
+    from app.core.firebase_client import acknowledge_alert
+    
+    success = acknowledge_alert(alert_id)
+    
+    if success:
+        return jsonify({'success': True, 'message': 'Alert acknowledged'})
+    else:
+        return jsonify({'success': False, 'message': 'Failed to acknowledge alert'}), 400
+
+@api_bp.route('/system-health', methods=['GET'])
+def get_system_health():
+    """Get system health logs."""
+    from app.core.firebase_client import get_system_health_logs
+    
+    hours = request.args.get('hours', 24, type=int)
+    limit = request.args.get('limit', 100, type=int)
+    
+    logs = get_system_health_logs(hours=hours, limit=limit)
+    
+    return jsonify(logs)
+
+@api_bp.route('/system-health', methods=['POST'])
+def log_system_health():
+    """Log current system health metrics."""
+    from app.core.firebase_client import log_system_health
+    import psutil  # Make sure to install this package
+    
+    try:
+        # Get system metrics
+        cpu_usage = psutil.cpu_percent()
+        memory_usage = psutil.virtual_memory().percent
+        disk_usage = psutil.disk_usage('/').percent
+        
+        # Get optional data from request
+        data = request.json or {}
+        temperature = data.get('temperature')
+        fps = data.get('fps')
+        
+        # Log health data
+        log_id = log_system_health(
+            cpu_usage=cpu_usage,
+            memory_usage=memory_usage,
+            disk_usage=disk_usage,
+            temperature=temperature,
+            fps=fps
+        )
+        
+        return jsonify({
+            'success': True, 
+            'log_id': log_id,
+            'metrics': {
+                'cpu_usage': cpu_usage,
+                'memory_usage': memory_usage,
+                'disk_usage': disk_usage,
+                'temperature': temperature,
+                'fps': fps
+            }
+        })
+    except Exception as e:
+        logger.exception(f"Error logging system health: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 400

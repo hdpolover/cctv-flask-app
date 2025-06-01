@@ -4,6 +4,7 @@ Main application routes for web interface
 from flask import Blueprint, render_template, redirect, url_for, request, Response, current_app, session, flash
 import threading
 import logging
+import os
 
 from app.services.video_service import VideoService
 from app.models.detection_model import DetectionModel
@@ -109,21 +110,62 @@ def login():
 @main_bp.route('/home')
 def home():
     """Home page with video feed."""
-    global detection_model
+    global detection_model, video_service
     
-    # Check if services are initialized
-    if detection_model is None:
-        initialize_services()
+    # Get current counts
+    entries = 0
+    exits = 0
+    people_in_room = 0
     
-    # Get counters
-    entries, exits = detection_model.get_entry_exit_count()
-    people_in_room = max(0, entries - exits)
+    if detection_model:
+        entries, exits = detection_model.get_entry_exit_count()
+        people_in_room = max(0, entries - exits)  # Calculate people in room from entries/exits
     
-    return render_template('home.html', 
-                          entries=entries, 
-                          exits=exits, 
+    # Get door configuration
+    door_defined = False
+    door_coordinates = None
+    inside_direction = 'right'
+    
+    if detection_model:
+        door_area = detection_model.get_door_area()
+        if door_area and all(v is not None for v in door_area):
+            door_defined = True
+            door_coordinates = {
+                'x1': door_area[0],
+                'y1': door_area[1],
+                'x2': door_area[2],
+                'y2': door_area[3]
+            }
+            inside_direction = detection_model.get_inside_direction()
+    
+    # Get video source details
+    video_source = "Camera"
+    resolution = "640 x 480"
+    frame_rate = 30
+    
+    if video_service:
+        # Determine video source type
+        if video_service.is_file:
+            video_source = f"File: {os.path.basename(video_service.video_path)}"
+        elif video_service.is_rtsp:
+            video_source = f"RTSP Stream"
+        elif video_service.is_camera:
+            video_source = f"Camera #{video_service.video_path}"
+        
+        # Get resolution and frame rate
+        resolution = f"{video_service.resolution[0]} x {video_service.resolution[1]}"
+        frame_rate = video_service.frame_rate
+    
+    return render_template('home.html',
                           people_in_room=people_in_room,
-                          door_defined=detection_model.door_defined)
+                          entries=entries,
+                          exits=exits,
+                          door_defined=door_defined,
+                          door_coordinates=door_coordinates,
+                          inside_direction=inside_direction,
+                          video_source=video_source,
+                          resolution=resolution,
+                          frame_rate=frame_rate)
 
 @main_bp.route('/video_feed')
 def video_feed():
@@ -135,6 +177,18 @@ def video_feed():
         initialize_services()
         
     return Response(video_service.generate_frames(),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@main_bp.route('/raw_video_feed')
+def raw_video_feed():
+    """Raw video streaming route without detection for camera settings."""
+    global video_service
+    
+    # Check if services are initialized
+    if video_service is None:
+        initialize_services()
+        
+    return Response(video_service.generate_raw_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @main_bp.route('/dashboard')
@@ -153,52 +207,78 @@ def camera_settings():
         initialize_services()
     
     if request.method == 'POST':
-        # Get video source setting
-        video_source = request.form.get('video_source', 'camera')
-        
-        if video_source == 'demo':
-            # Use demo video with default settings
-            video_path = 'app/static/videos/demo.mp4'
-            # Use default or existing settings for frame rate and resolution
-            settings = fetch_camera_settings()
-            frame_rate = int(settings.get('frame_rate', 30))
-            resolution_str = settings.get('resolution', '640,480')
-        else:
-            # Use camera settings from form
-            camera_url = request.form.get('camera_url', '0')
-            frame_rate = int(request.form.get('frame_rate', 30))
-            resolution_str = request.form.get('resolution', '640,480')
-            video_path = camera_url
-        
-        # Parse resolution
-        if ',' in resolution_str:
-            width, height = map(int, resolution_str.split(','))
-            resolution = (width, height)
-        else:
-            resolution = current_app.config['RESOLUTION']
-
-        # Update video service
-        if video_service:
-            video_service.update_settings(video_path, frame_rate, resolution)        # Prepare settings to save
-        save_data = {
-            'video_source': video_source,
-            'frame_rate': frame_rate,
-            'resolution': resolution_str
-        }
-        
-        # Add camera-specific settings
-        if video_source == 'camera':
-            save_data['camera_url'] = camera_url
-        else:  # demo mode
-            save_data['camera_url'] = video_path  # Save the demo video path
+        try:
+            # Get video source setting
+            video_source = request.form.get('video_source', 'camera')
             
-        # Save all settings
-        save_camera_settings(**save_data)
-        
-        logger.info(f"Saved camera settings: {save_data}")
-        
-        logger.info(f"Camera settings updated: source={video_source}, path={video_path}")
-        return redirect(url_for('main.camera_settings'))    # Get current settings
+            if video_source == 'demo':
+                # Use demo video with default settings
+                video_path = 'app/static/videos/demo.mp4'
+                # Use default or existing settings for frame rate and resolution
+                settings = fetch_camera_settings()
+                frame_rate = int(settings.get('frame_rate', 30))
+                resolution_str = settings.get('resolution', '640,480')
+            else:
+                # Use camera settings from form
+                camera_url = request.form.get('camera_url', '0')
+                frame_rate = int(request.form.get('frame_rate', 30))
+                resolution_str = request.form.get('resolution', '640,480')
+                video_path = camera_url
+            
+            # Parse resolution
+            if ',' in resolution_str:
+                width, height = map(int, resolution_str.split(','))
+                resolution = (width, height)
+            else:
+                resolution = current_app.config['RESOLUTION']
+
+            # Update video service
+            if video_service:
+                video_service.update_settings(video_path, frame_rate, resolution)
+                
+            # Prepare settings to save
+            save_data = {
+                'video_source': video_source,
+                'frame_rate': frame_rate,
+                'resolution': resolution_str
+            }
+            
+            # Add camera-specific settings
+            if video_source == 'camera':
+                save_data['camera_url'] = camera_url
+            else:  # demo mode
+                save_data['camera_url'] = video_path  # Save the demo video path
+                
+            # Save all settings
+            save_camera_settings(**save_data)
+            
+            logger.info(f"Saved camera settings: {save_data}")
+            logger.info(f"Camera settings updated: source={video_source}, path={video_path}")
+            
+            # If AJAX request, return JSON response
+            if request.headers.get('Accept') == 'application/json':
+                return {'success': True, 'message': 'Camera settings updated successfully'}
+            
+            # For regular form submission, redirect
+            return redirect(url_for('main.camera_settings'))
+            
+        except Exception as e:
+            logger.error(f"Error updating camera settings: {str(e)}")
+            
+            # If it's an OpenCV error
+            if 'cv2.error' in str(e) or 'OpenCV' in str(e):
+                error_message = "OpenCV error: Cannot access camera with these settings. Please check camera URL and resolution."
+            else:
+                error_message = f"Error updating camera settings: {str(e)}"
+            
+            # If AJAX request, return JSON with error
+            if request.headers.get('Accept') == 'application/json':
+                return {'success': False, 'error': error_message}, 400
+            
+            # For regular form submission, flash error and return to form
+            flash(error_message, 'error')
+            
+    # Get current settings
     settings = fetch_camera_settings()
     if settings is None:
         settings = {}
@@ -224,13 +304,40 @@ def camera_settings():
                           door_area=door_area,
                           inside_direction=inside_direction,
                           cuda_available=detection_model.cuda_available)
+        
+    return render_template('camera-settings.html', 
+                          settings=settings,
+                          door_area=door_area,
+                          inside_direction=inside_direction,
+                          cuda_available=detection_model.cuda_available)
 
 @main_bp.route('/reports')
 def reports():
     """Reports page."""
     from app.core.firebase_client import get_people_count_logs
     logs = get_people_count_logs(limit=100)
-    return render_template('reports.html', logs=logs)
+    
+    # Calculate totals from logs
+    total_entries = 0
+    total_exits = 0
+    
+    for log in logs:
+        # Handle both 'entries' and 'people_entered' field names
+        entries = log.get('entries', 0) or log.get('people_entered', 0) or 0
+        exits = log.get('exits', 0) or log.get('people_exited', 0) or 0
+        
+        total_entries += entries
+        total_exits += exits
+    
+    return render_template('reports.html', 
+                         logs=logs, 
+                         total_entries=total_entries, 
+                         total_exits=total_exits)
+
+@main_bp.route('/alerts')
+def alerts():
+    """System alerts page."""
+    return render_template('alerts.html')
 
 @main_bp.route('/toggle-processing-device', methods=['POST'])
 def toggle_processing_device():

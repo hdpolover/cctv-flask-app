@@ -1,0 +1,498 @@
+{% extends "layouts/base.html" %}
+{% block title %}System Alerts{% endblock %}
+
+{% block styles %}
+<style>
+    .alert-card {
+        margin-bottom: 20px;
+        border-radius: 5px;
+        border-left: 5px solid #ccc;
+        transition: all 0.3s ease;
+    }
+    .alert-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    .alert-info {
+        border-left-color: #17a2b8;
+    }
+    .alert-warning {
+        border-left-color: #ffc107;
+    }
+    .alert-critical {
+        border-left-color: #dc3545;
+    }
+    .alert-acknowledged {
+        opacity: 0.7;
+    }
+    .alert-timestamp {
+        font-size: 0.8rem;
+        color: #6c757d;
+    }
+    .alert-actions {
+        text-align: right;
+    }
+    .alert-badge {
+        font-size: 0.75rem;
+        padding: 0.25em 0.5em;
+        margin-right: 5px;
+    }
+    .create-alert-form {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 5px;
+        margin-bottom: 30px;
+    }
+    .filter-card {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">System Alerts</h1>
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <!-- Filter options -->
+            <div class="filter-card">
+                <h5>Filter Alerts</h5>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="alertType">Alert Type</label>
+                            <select class="form-control" id="alertType">
+                                <option value="">All Types</option>
+                                <option value="security">Security</option>
+                                <option value="system">System</option>
+                                <option value="crowd">Crowd</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="alertSeverity">Severity</label>
+                            <select class="form-control" id="alertSeverity">
+                                <option value="">All Severities</option>
+                                <option value="info">Info</option>
+                                <option value="warning">Warning</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="alertStatus">Status</label>
+                            <select class="form-control" id="alertStatus">
+                                <option value="">All Statuses</option>
+                                <option value="false">Unacknowledged</option>
+                                <option value="true">Acknowledged</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-right mt-2">
+                    <button class="btn btn-primary" id="filterButton">Apply Filters</button>
+                </div>
+            </div>
+            
+            <!-- Alert list -->
+            <div id="alertsList" class="mt-4">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="sr-only">Loading...</span>
+                    </div>
+                    <p>Loading alerts...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <!-- Create new alert -->
+            <div class="create-alert-form">
+                <h5>Create New Alert</h5>
+                <form id="createAlertForm">
+                    <div class="form-group">
+                        <label for="alertTypeInput">Alert Type</label>
+                        <select class="form-control" id="alertTypeInput" required>
+                            <option value="security">Security</option>
+                            <option value="system">System</option>
+                            <option value="crowd">Crowd</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="alertSeverityInput">Severity</label>
+                        <select class="form-control" id="alertSeverityInput" required>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="alertMessage">Message</label>
+                        <textarea class="form-control" id="alertMessage" rows="3" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="alertMetadata">Metadata (JSON)</label>
+                        <textarea class="form-control" id="alertMetadata" rows="2" placeholder='{"key": "value"}'></textarea>
+                        <small class="form-text text-muted">Optional. Enter valid JSON data.</small>
+                    </div>
+                    <button type="submit" class="btn btn-success btn-block">Create Alert</button>
+                </form>
+            </div>
+            
+            <!-- System Health -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">System Health</h5>
+                </div>
+                <div class="card-body">
+                    <div id="systemHealth">
+                        <p class="text-center">Loading health data...</p>
+                    </div>
+                    <div id="healthChart" style="height: 200px;"></div>
+                    <div class="text-center mt-3">
+                        <button class="btn btn-sm btn-info" id="refreshHealth">Refresh Health Data</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    $(document).ready(function() {
+        // Load alerts on page load
+        loadAlerts();
+        
+        // Load system health data
+        loadSystemHealth();
+        
+        // Filter button click handler
+        $('#filterButton').click(function() {
+            loadAlerts();
+        });
+        
+        // Refresh health data button
+        $('#refreshHealth').click(function() {
+            loadSystemHealth();
+        });
+        
+        // Create alert form submission
+        $('#createAlertForm').submit(function(e) {
+            e.preventDefault();
+            
+            // Get form values
+            let alertType = $('#alertTypeInput').val();
+            let severity = $('#alertSeverityInput').val();
+            let message = $('#alertMessage').val();
+            let metadataStr = $('#alertMetadata').val();
+            
+            // Parse metadata JSON if provided
+            let metadata = null;
+            if (metadataStr.trim() !== '') {
+                try {
+                    metadata = JSON.parse(metadataStr);
+                } catch (error) {
+                    alert('Invalid JSON in metadata field');
+                    return;
+                }
+            }
+            
+            // Create alert data
+            let alertData = {
+                type: alertType,
+                severity: severity,
+                message: message
+            };
+            
+            if (metadata !== null) {
+                alertData.metadata = metadata;
+            }
+            
+            // Send POST request to create alert
+            $.ajax({
+                url: '/api/alerts',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(alertData),
+                success: function(response) {
+                    if (response.success) {
+                        // Clear form and reload alerts
+                        $('#alertMessage').val('');
+                        $('#alertMetadata').val('');
+                        loadAlerts();
+                        
+                        // Show success message
+                        alert('Alert created successfully');
+                    } else {
+                        alert('Error: ' + response.message);
+                    }
+                },
+                error: function(xhr) {
+                    alert('Error creating alert: ' + xhr.responseText);
+                }
+            });
+        });
+    });
+    
+    // Function to load alerts with filters
+    function loadAlerts() {
+        // Get filter values
+        let alertType = $('#alertType').val();
+        let severity = $('#alertSeverity').val();
+        let acknowledged = $('#alertStatus').val();
+        
+        // Build query parameters
+        let params = new URLSearchParams();
+        if (alertType) params.append('type', alertType);
+        if (severity) params.append('severity', severity);
+        if (acknowledged) params.append('acknowledged', acknowledged);
+        
+        // Show loading indicator
+        $('#alertsList').html(`
+            <div class="text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="sr-only">Loading...</span>
+                </div>
+                <p>Loading alerts...</p>
+            </div>
+        `);
+        
+        // Fetch alerts from API
+        $.ajax({
+            url: '/api/alerts?' + params.toString(),
+            type: 'GET',
+            success: function(alerts) {
+                if (alerts.length === 0) {
+                    $('#alertsList').html('<div class="alert alert-info">No alerts found with the current filters.</div>');
+                    return;
+                }
+                
+                // Build HTML for alerts
+                let alertsHtml = '';
+                alerts.forEach(function(alert) {
+                    // Format timestamp
+                    let timestamp = new Date(alert.timestamp._seconds * 1000);
+                    let formattedDate = timestamp.toLocaleString();
+                    
+                    // Determine card class based on severity
+                    let cardClass = 'alert-' + alert.severity;
+                    if (alert.acknowledged) {
+                        cardClass += ' alert-acknowledged';
+                    }
+                    
+                    // Build alert card
+                    alertsHtml += `
+                        <div class="card alert-card ${cardClass}">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between">
+                                    <h5 class="card-title">
+                                        <span class="badge badge-${getSeverityClass(alert.severity)} alert-badge">${alert.severity}</span>
+                                        <span class="badge badge-secondary alert-badge">${alert.type}</span>
+                                        ${alert.message}
+                                    </h5>
+                                    <div>
+                                        ${alert.acknowledged ? 
+                                            '<span class="badge badge-secondary">Acknowledged</span>' : 
+                                            `<button class="btn btn-sm btn-outline-primary acknowledge-btn" data-id="${alert.id}">Acknowledge</button>`
+                                        }
+                                    </div>
+                                </div>
+                                <p class="alert-timestamp">Created: ${formattedDate}</p>
+                                ${alert.metadata ? `<pre class="mt-2 p-2 bg-light"><code>${JSON.stringify(alert.metadata, null, 2)}</code></pre>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                // Update the alerts list
+                $('#alertsList').html(alertsHtml);
+                
+                // Add click handler for acknowledge buttons
+                $('.acknowledge-btn').click(function() {
+                    acknowledgeAlert($(this).data('id'));
+                });
+            },
+            error: function(xhr) {
+                $('#alertsList').html('<div class="alert alert-danger">Error loading alerts: ' + xhr.responseText + '</div>');
+            }
+        });
+    }
+    
+    // Function to acknowledge an alert
+    function acknowledgeAlert(alertId) {
+        $.ajax({
+            url: '/api/alerts/' + alertId + '/acknowledge',
+            type: 'POST',
+            success: function(response) {
+                if (response.success) {
+                    loadAlerts();
+                } else {
+                    alert('Error: ' + response.message);
+                }
+            },
+            error: function(xhr) {
+                alert('Error acknowledging alert: ' + xhr.responseText);
+            }
+        });
+    }
+    
+    // Function to load system health data
+    function loadSystemHealth() {
+        $.ajax({
+            url: '/api/system-health?hours=24&limit=100',
+            type: 'GET',
+            success: function(logs) {
+                if (logs.length === 0) {
+                    $('#systemHealth').html('<p>No health data available</p>');
+                    return;
+                }
+                
+                // Get the most recent log
+                let latestLog = logs[0];
+                
+                // Update health indicators
+                $('#systemHealth').html(`
+                    <div class="row">
+                        <div class="col-4 text-center">
+                            <h6>CPU</h6>
+                            <div class="progress">
+                                <div class="progress-bar bg-${getProgressBarColor(latestLog.cpu_usage)}" 
+                                     role="progressbar" 
+                                     style="width: ${latestLog.cpu_usage}%" 
+                                     aria-valuenow="${latestLog.cpu_usage}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">${latestLog.cpu_usage}%</div>
+                            </div>
+                        </div>
+                        <div class="col-4 text-center">
+                            <h6>Memory</h6>
+                            <div class="progress">
+                                <div class="progress-bar bg-${getProgressBarColor(latestLog.memory_usage)}" 
+                                     role="progressbar" 
+                                     style="width: ${latestLog.memory_usage}%" 
+                                     aria-valuenow="${latestLog.memory_usage}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">${latestLog.memory_usage}%</div>
+                            </div>
+                        </div>
+                        <div class="col-4 text-center">
+                            <h6>Disk</h6>
+                            <div class="progress">
+                                <div class="progress-bar bg-${getProgressBarColor(latestLog.disk_usage)}" 
+                                     role="progressbar" 
+                                     style="width: ${latestLog.disk_usage}%" 
+                                     aria-valuenow="${latestLog.disk_usage}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">${latestLog.disk_usage}%</div>
+                            </div>
+                        </div>
+                    </div>
+                    ${latestLog.fps ? 
+                        `<div class="text-center mt-3">
+                            <span class="badge badge-info">FPS: ${latestLog.fps.toFixed(1)}</span>
+                        </div>` : 
+                        ''
+                    }
+                    <div class="text-center mt-2">
+                        <small class="text-muted">Last updated: ${new Date(latestLog.timestamp._seconds * 1000).toLocaleString()}</small>
+                    </div>
+                `);
+                
+                // Prepare data for chart
+                let timestamps = [];
+                let cpuData = [];
+                let memoryData = [];
+                
+                // Process in reverse order to get chronological data
+                for (let i = logs.length - 1; i >= 0; i--) {
+                    let log = logs[i];
+                    timestamps.push(new Date(log.timestamp._seconds * 1000).toLocaleTimeString());
+                    cpuData.push(log.cpu_usage);
+                    memoryData.push(log.memory_usage);
+                }
+                
+                // Create or update chart
+                if (window.healthChart) {
+                    window.healthChart.data.labels = timestamps;
+                    window.healthChart.data.datasets[0].data = cpuData;
+                    window.healthChart.data.datasets[1].data = memoryData;
+                    window.healthChart.update();
+                } else {
+                    // Create new chart
+                    let ctx = document.getElementById('healthChart').getContext('2d');
+                    window.healthChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: timestamps,
+                            datasets: [
+                                {
+                                    label: 'CPU Usage (%)',
+                                    data: cpuData,
+                                    borderColor: 'rgba(255, 99, 132, 1)',
+                                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                                    borderWidth: 2,
+                                    tension: 0.4,
+                                    fill: true
+                                },
+                                {
+                                    label: 'Memory Usage (%)',
+                                    data: memoryData,
+                                    borderColor: 'rgba(54, 162, 235, 1)',
+                                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                                    borderWidth: 2,
+                                    tension: 0.4,
+                                    fill: true
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 100
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'bottom'
+                                }
+                            }
+                        }
+                    });
+                }
+            },
+            error: function(xhr) {
+                $('#systemHealth').html('<div class="alert alert-danger">Error loading health data</div>');
+            }
+        });
+    }
+    
+    // Helper function to get severity class
+    function getSeverityClass(severity) {
+        switch (severity) {
+            case 'info': return 'info';
+            case 'warning': return 'warning';
+            case 'critical': return 'danger';
+            default: return 'secondary';
+        }
+    }
+    
+    // Helper function to get progress bar color
+    function getProgressBarColor(value) {
+        if (value < 50) return 'success';
+        if (value < 80) return 'warning';
+        return 'danger';
+    }
+</script>
+{% endblock %}

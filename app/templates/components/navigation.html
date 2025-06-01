@@ -1,7 +1,12 @@
 <nav class="main-nav">
-    <ul>
-        <li><a href="{{ url_for('main.home') }}" {% if request.endpoint == 'main.home' %}class="active"{% endif %}>Beranda</a></li>
-        <li><a href="{{ url_for('main.camera_settings') }}" {% if request.endpoint == 'main.camera_settings' %}class="active"{% endif %}>Pengaturan Kamera</a></li>
-        <li><a href="{{ url_for('main.reports') }}" {% if request.endpoint == 'main.reports' %}class="active"{% endif %}>Laporan</a></li>
-    </ul>
+    <div class="container">
+        <a href="{{ url_for('main.home') }}" class="logo">
+            CCTV Monitor
+        </a>        <ul>
+            <li><a href="{{ url_for('main.home') }}" {% if request.endpoint == 'main.home' %}class="active"{% endif %}>Beranda</a></li>
+            <li><a href="{{ url_for('main.camera_settings') }}" {% if request.endpoint == 'main.camera_settings' %}class="active"{% endif %}>Pengaturan Kamera</a></li>
+            <li><a href="{{ url_for('main.reports') }}" {% if request.endpoint == 'main.reports' %}class="active"{% endif %}>Laporan</a></li>
+            <!-- <li><a href="{{ url_for('main.alerts') }}" {% if request.endpoint == 'main.alerts' %}class="active"{% endif %}>Alerts</a></li> -->
+        </ul>
+    </div>
 </nav>

@@ -1,11 +1,22 @@
-<!-- Flash messages component -->
+<!-- Modern Flash messages component -->
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
         <div class="flash-messages">
             {% for category, message in messages %}
-                <div class="alert alert-{{ category }}">
-                    <span class="message">{{ message }}</span>
-                    <button type="button" class="close" onclick="this.parentElement.remove()">&times;</button>
+                <div class="flash-alert flash-{{ category }}">
+                    <div class="flash-content">
+                        <div class="flash-icon">
+                            {% if category == 'success' %}✅
+                            {% elif category == 'error' or category == 'danger' %}❌
+                            {% elif category == 'warning' %}⚠️
+                            {% else %}ℹ️
+                            {% endif %}
+                        </div>
+                        <span class="flash-message">{{ message }}</span>
+                    </div>
+                    <button type="button" class="flash-close" onclick="this.parentElement.remove()">
+                        <span>×</span>
+                    </button>
                 </div>
             {% endfor %}
         </div>
@@ -15,33 +26,87 @@
 <style>
 .flash-messages {
     position: fixed;
-    top: 20px;
-    right: 20px;
+    top: var(--spacing-lg);
+    right: var(--spacing-lg);
     z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
     max-width: 400px;
 }
 
-.alert {
-    margin-bottom: 10px;
-    padding: 15px;
-    border-radius: 4px;
+.flash-alert {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
+    box-shadow: var(--shadow-xl);
+    border-left: 4px solid;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
     animation: slideIn 0.3s ease-out;
 }
 
-.alert .close {
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 20px;
-    cursor: pointer;
-    padding: 0 5px;
+.flash-alert.flash-success {
+    border-left-color: var(--success-color);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.05));
 }
 
-.alert .close:hover {
-    opacity: 0.7;
+.flash-alert.flash-error,
+.flash-alert.flash-danger {
+    border-left-color: var(--danger-color);
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+}
+
+.flash-alert.flash-warning {
+    border-left-color: var(--warning-color);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.05));
+}
+
+.flash-alert.flash-info {
+    border-left-color: var(--info-color);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
+}
+
+.flash-content {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    flex: 1;
+}
+
+.flash-icon {
+    font-size: 1.25rem;
+    margin-top: 2px;
+}
+
+.flash-message {
+    color: var(--text-primary);
+    font-weight: 500;
+    line-height: 1.5;
+    flex: 1;
+}
+
+.flash-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    font-weight: 300;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.flash-close:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+    color: var(--text-primary);
 }
 
 @keyframes slideIn {
@@ -52,6 +117,15 @@
     to {
         transform: translateX(0);
         opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .flash-messages {
+        top: 0.5rem;
+        right: 0.5rem;
+        left: 0.5rem;
+        max-width: none;
     }
 }
 </style>

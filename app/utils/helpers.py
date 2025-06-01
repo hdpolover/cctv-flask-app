@@ -104,23 +104,21 @@ def draw_door_overlay(frame, door_area, inside_direction):
         # Draw door center line
         door_center_x = int((x1 + x2) / 2)
         cv2.line(frame, (door_center_x, y1), (door_center_x, y2), (255, 0, 0), 2)
-        
-        # Draw inside/outside labels
+          # Draw inside/outside labels
         if inside_direction == "right":
-            cv2.putText(frame, "Outside", (x1 - 80, y1 + 20), 
+            cv2.putText(frame, "Luar", (x1 - 80, y1 + 20), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(frame, "Inside", (x2 + 10, y1 + 20), 
+            cv2.putText(frame, "Dalam", (x2 + 10, y1 + 20), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            # Draw arrows indicating direction
+              # Draw arrows indicating direction
             cv2.arrowedLine(frame, (x1 - 20, y1 + 40), (x1 + 20, y1 + 40), 
                         (0, 255, 0), 2, tipLength=0.3)
             cv2.arrowedLine(frame, (x2 + 20, y1 + 60), (x2 - 20, y1 + 60), 
                         (0, 0, 255), 2, tipLength=0.3)
         else:
-            cv2.putText(frame, "Inside", (x1 - 80, y1 + 20), 
+            cv2.putText(frame, "Dalam", (x1 - 80, y1 + 20), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(frame, "Outside", (x2 + 10, y1 + 20), 
+            cv2.putText(frame, "Luar", (x2 + 10, y1 + 20), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
             # Draw arrows indicating direction
