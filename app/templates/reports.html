@@ -1,48 +1,46 @@
 {% extends "base.html" %}
 
-{% block title %}Reports - CCTV People Counter{% endblock %}
+{% block title %}Laporan - Penghitung Orang CCTV{% endblock %}
 
 {% block content %}
 <div class="reports-container">
-    <h1>Traffic Reports</h1>
+    <h1>Laporan Lalu Lintas</h1>
     
     <div class="filters">
         <div class="input-group">
-            <label for="date-range">Date Range</label>
+            <label for="date-range">Rentang Tanggal</label>
             <select id="date-range" onchange="updateReports()">
-                <option value="today">Today</option>
-                <option value="week">Last 7 Days</option>
-                <option value="month">Last 30 Days</option>
-                <option value="custom">Custom Range</option>
+                <option value="today">Hari Ini</option>
+                <option value="week">7 Hari Terakhir</option>
+                <option value="month">30 Hari Terakhir</option>
+                <option value="custom">Rentang Khusus</option>
             </select>
         </div>
-    </div>
-
-    <div class="reports-grid">
+    </div>    <div class="reports-grid">
         <div class="report-card">
-            <h3>Total Traffic</h3>
+            <h3>Total Lalu Lintas</h3>
             <div class="report-content" id="total-traffic">
                 <div class="stat">
-                    <span class="label">Entries:</span>
+                    <span class="label">Masuk:</span>
                     <span class="value">{{ total_entries if total_entries else 0 }}</span>
                 </div>
                 <div class="stat">
-                    <span class="label">Exits:</span>
+                    <span class="label">Keluar:</span>
                     <span class="value">{{ total_exits if total_exits else 0 }}</span>
                 </div>
             </div>
         </div>
 
         <div class="report-card">
-            <h3>Traffic Log</h3>
+            <h3>Log Lalu Lintas</h3>
             <div class="report-content">
                 <table class="logs-table">
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>Entries</th>
-                            <th>Exits</th>
-                            <th>People in Room</th>
+                            <th>Waktu</th>
+                            <th>Masuk</th>
+                            <th>Keluar</th>
+                            <th>Orang di Ruangan</th>
                         </tr>
                     </thead>
                     <tbody>

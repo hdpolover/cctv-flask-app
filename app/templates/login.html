@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}Login - CCTV People Counter{% endblock %}
+{% block title %}Masuk - Penghitung Orang CCTV{% endblock %}
 
 {% block content %}
 <div class="login-container">
-    <h2>Login to CCTV App</h2>
+    <h2>Masuk ke Aplikasi CCTV</h2>
     
     {% include 'components/flash.html' %}
     
     <form action="{{ url_for('main.login') }}" method="POST">
         <div class="input-group">
-            <label for="username">Username</label>
+            <label for="username">Nama Pengguna</label>
             <input type="text" id="username" name="username" required>
         </div>
         <div class="input-group">
-            <label for="password">Password</label>
+            <label for="password">Kata Sandi</label>
             <input type="password" id="password" name="password" required>
         </div>
-        <button type="submit">Login</button>
+        <button type="submit">Masuk</button>
     </form>
 </div>
 

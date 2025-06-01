@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,14 +7,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
-    <div class="container">
-        <!-- Sidebar -->
+    <div class="container">        <!-- Sidebar -->
         <div class="sidebar">
             <h2>Dashboard</h2>
             <ul>
-                <li><a href="{{ url_for('home') }}">Home</a></li>
-                <li><a href="{{ url_for('camera_settings') }}">Camera Settings</a></li>
-                <li><a href="{{ url_for('reports') }}">Reports</a></li>
+                <li><a href="{{ url_for('home') }}">Beranda</a></li>
+                <li><a href="{{ url_for('camera_settings') }}">Pengaturan Kamera</a></li>
+                <li><a href="{{ url_for('reports') }}">Laporan</a></li>
             </ul>
         </div>
 

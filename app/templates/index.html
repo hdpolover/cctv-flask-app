@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>WebRTC Streaming</title>
+    <title>Streaming WebRTC</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-  </head>
-  <body>
-    <h1>WebRTC Streaming</h1>
+  </head>  <body>
+    <h1>Streaming WebRTC</h1>
     <video id="video" autoplay playsinline></video>
     <script>
       const video = document.getElementById('video')
@@ -18,13 +17,12 @@
           video.srcObject = img
         }
       })
-      
-      socket.on('connect', () => {
-        console.log('Connected to server')
+        socket.on('connect', () => {
+        console.log('Terhubung ke server')
       })
       
       socket.on('disconnect', () => {
-        console.log('Disconnected from server')
+        console.log('Terputus dari server')
       })
     </script>
   </body>

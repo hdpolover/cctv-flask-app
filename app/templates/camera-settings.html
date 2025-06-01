@@ -1,6 +1,6 @@
 {% extends "layouts/base.html" %}
 
-{% block title %}Camera Settings - CCTV People Counter{% endblock %}
+{% block title %}Pengaturan Kamera - Penghitung Orang CCTV{% endblock %}
 
 {% block extra_head %}
 <script src="{{ url_for('static', filename='js/door-config.js') }}"></script>
@@ -38,38 +38,34 @@
 
 {% block content %}
 <div class="settings-container">
-    <h1>Camera Settings</h1>  
+    <h1>Pengaturan Kamera</h1>  
     
     <div class="alert alert-info mb-4">
-        <h3>Processing Mode</h3>
+        <h3>Mode Pemrosesan</h3>
         <div class="input-group">
-            <label for="processing-mode">Select processing mode:</label>
-            <select id="processing-mode">
-                <option value="gpu" {% if settings.use_gpu != False %}selected{% endif %}>GPU (CUDA) - Faster</option>
-                <option value="cpu" {% if settings.use_gpu == False %}selected{% endif %}>CPU - Compatible</option>
+            <label for="processing-mode">Pilih mode pemrosesan:</label>            <select id="processing-mode">
+                <option value="gpu" {% if settings.use_gpu != False %}selected{% endif %}>GPU (CUDA) - Lebih Cepat</option>
+                <option value="cpu" {% if settings.use_gpu == False %}selected{% endif %}>CPU - Kompatibel</option>
             </select>
-        </div>
-        <div id="processing-status" class="mt-2">
+        </div>        <div id="processing-status" class="mt-2">
             {% if not cuda_available %}
             <div class="alert alert-warning">
-                <p>⚠️ CUDA not available on this system. GPU acceleration will not work.</p>
+                <p>⚠️ CUDA tidak tersedia di sistem ini. Akselerasi GPU tidak akan berfungsi.</p>
             </div>
             {% endif %}
         </div>
-        <button id="toggle-processing" type="button" class="btn-secondary">Apply Processing Mode</button>
+        <button id="toggle-processing" type="button" class="btn-secondary">Terapkan Mode Pemrosesan</button>
     </div>
-    
-    <form action="{{ url_for('main.camera_settings') }}" method="POST">
+      <form action="{{ url_for('main.camera_settings') }}" method="POST">
         <div class="input-group">
-            <label for="video-source">Video Source</label>
+            <label for="video-source">Sumber Video</label>
             <select id="video-source" name="video_source" onchange="toggleCameraFields(this.value)">
-                <option value="camera" {% if settings.video_source != 'demo' %}selected{% endif %}>Camera</option>
-                <option value="demo" {% if settings.video_source == 'demo' %}selected{% endif %}>Demo Video (for testing)</option>
+                <option value="camera" {% if settings.video_source != 'demo' %}selected{% endif %}>Kamera</option>
+                <option value="demo" {% if settings.video_source == 'demo' %}selected{% endif %}>Video Demo (untuk testing)</option>
             </select>
-        </div>
-        <div id="camera-fields" {% if settings.video_source == 'demo' %}style="display:none"{% endif %}>
+        </div>        <div id="camera-fields" {% if settings.video_source == 'demo' %}style="display:none"{% endif %}>
             <div class="input-group">
-                <label for="camera-url">Camera Stream URL</label>
+                <label for="camera-url">URL Stream Kamera</label>
                 <input type="text" id="camera-url" name="camera_url" value="{{ settings.camera_url if settings else '0' }}">
             </div>
             <div class="input-group">
@@ -77,10 +73,10 @@
                 <input type="number" id="frame-rate" name="frame_rate" value="{{ settings.frame_rate if settings else 30 }}">
             </div>
             <div class="input-group">
-                <label for="resolution">Resolution (format: width,height)</label>
+                <label for="resolution">Resolusi (format: width,height)</label>
                 <input type="text" id="resolution" name="resolution" value="{{ settings.resolution if settings else '640,480' }}">
             </div>        </div>
-        <button type="submit">Update Camera</button>
+        <button type="submit">Perbarui Kamera</button>
     </form>
     
     <script>
@@ -100,9 +96,8 @@
             const processingMode = document.getElementById('processing-mode').value;
             const useGpu = processingMode === 'gpu';
             const statusDiv = document.getElementById('processing-status');
-            
-            // Show loading message
-            statusDiv.innerHTML = '<p>Switching processing mode...</p>';
+              // Show loading message
+            statusDiv.innerHTML = '<p>Mengubah mode pemrosesan...</p>';
             
             // Send request to toggle processing device
             fetch('/toggle-processing-device', {
@@ -115,43 +110,39 @@
                 }),
             })
             .then(response => response.json())
-            .then(data => {
-                if (data.success) {
+            .then(data => {                if (data.success) {
                     let message = `<div class="alert alert-success">
-                        <p>✓ Processing device set to: ${data.device}</p>`;
+                        <p>✓ Perangkat pemrosesan diatur ke: ${data.device}</p>`;
                     
                     if (useGpu && !data.cuda_available) {
-                        message += `<p class="mt-2">⚠️ CUDA not available. Using CPU despite GPU selection.</p>`;
+                        message += `<p class="mt-2">⚠️ CUDA tidak tersedia. Menggunakan CPU meskipun dipilih GPU.</p>`;
                     }
                     
                     message += `</div>`;
                     statusDiv.innerHTML = message;
                 } else {
                     statusDiv.innerHTML = `<div class="alert alert-danger">
-                        <p>Error setting processing device: ${data.error || 'Unknown error'}</p>
+                        <p>Error mengatur perangkat pemrosesan: ${data.error || 'Error tidak diketahui'}</p>
                     </div>`;
                 }
-            })
-            .catch(error => {
+            })            .catch(error => {
                 statusDiv.innerHTML = `<div class="alert alert-danger">
                     <p>Error: ${error.message}</p>
                 </div>`;
             });
         });
-    </script>
-
-    <h2 class="mt-4">Door Area Configuration</h2>
+    </script>    <h2 class="mt-4">Konfigurasi Area Pintu</h2>
     <div class="door-config">
         <div class="video-container">
             <div id="video-wrapper" style="position: relative;">
-                <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Video Feed" style="cursor: crosshair;">
+                <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Feed Video" style="cursor: crosshair;">
                 <div id="selection-box" style="position: absolute; border: 2px dashed red; display: none;"></div>
             </div>
         </div>
         
         <div class="door-settings">
             <div class="coordinates">
-                <p>Click and drag on the video to define the door area.</p>
+                <p>Klik dan seret pada video untuk mendefinisikan area pintu.</p>
                 <div class="input-group">
                     <label for="x1">X1:</label>
                     <input type="number" id="x1" value="{{ door_area.x1 if door_area else '' }}" readonly>
@@ -167,18 +158,17 @@
                 <div class="input-group">
                     <label for="y2">Y2:</label>
                     <input type="number" id="y2" value="{{ door_area.y2 if door_area else '' }}" readonly>
-                </div>
-                  <div class="input-group">
-                    <label for="inside-direction">Inside Direction:</label>
+                </div>                  <div class="input-group">
+                    <label for="inside-direction">Arah Dalam:</label>
                     <select id="inside-direction">
-                        <option value="right" {% if inside_direction == 'right' %}selected{% endif %}>Right Side</option>
-                        <option value="left" {% if inside_direction == 'left' %}selected{% endif %}>Left Side</option>
-                        <option value="up" {% if inside_direction == 'up' %}selected{% endif %}>Top Side</option>
-                        <option value="down" {% if inside_direction == 'down' %}selected{% endif %}>Bottom Side</option>
+                        <option value="right" {% if inside_direction == 'right' %}selected{% endif %}>Sisi Kanan</option>
+                        <option value="left" {% if inside_direction == 'left' %}selected{% endif %}>Sisi Kiri</option>
+                        <option value="up" {% if inside_direction == 'up' %}selected{% endif %}>Sisi Atas</option>
+                        <option value="down" {% if inside_direction == 'down' %}selected{% endif %}>Sisi Bawah</option>
                     </select>
                 </div>
                 
-                <button id="save-door" type="button" class="btn-primary">Save Door Area</button>
+                <button id="save-door" type="button" class="btn-primary">Simpan Area Pintu</button>
                 <div id="door-status" class="mt-2"></div>
             </div>
         </div>
