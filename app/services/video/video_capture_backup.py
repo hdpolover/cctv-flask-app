@@ -76,17 +76,16 @@ class VideoCaptureManager:
             if isinstance(self.video_path, str) and self.video_path.isdigit():
                 self.video_path = int(self.video_path)
             
-            # Determine the appropriate initialization method based on source type
-            if isinstance(self.video_path, int):
+            # Determine the appropriate initialization method based on source type            if isinstance(self.video_path, int):
                 # For camera devices, use DirectShow on Windows for better performance
                 logger.info(f"Initializing camera device: {self.video_path}")
                 cap = cv2.VideoCapture(self.video_path, cv2.CAP_DSHOW)
                 self.is_camera = True
-                
             elif isinstance(self.video_path, str) and self.video_path.lower().startswith(('rtsp://', 'rtmp://')):
-                # For RTSP streams, use enhanced settings and multiple backend attempts
+                # For RTSP streams, use specific settings
                 logger.info(f"Initializing RTSP stream: {self.video_path}")
                 
+                # Try different backends and settings for RTSP
                 cap = None
                 backends_to_try = [cv2.CAP_FFMPEG, cv2.CAP_GSTREAMER, cv2.CAP_ANY]
                 
@@ -100,22 +99,17 @@ class VideoCaptureManager:
                             # Set smaller buffer size for reduced latency
                             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                             
+                            # Try TCP transport first (more reliable)
+                            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
+                            
                             # Set timeout values to prevent hanging
                             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10 second timeout
                             cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5 second read timeout
-                            
-                            # Try to set codec (optional, may not work on all streams)
-                            try:
-                                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
-                            except:
-                                pass  # Ignore if codec setting fails
                             
                             # Test if we can actually read a frame
                             ret, test_frame = cap.read()
                             if ret and test_frame is not None and test_frame.size > 0:
                                 logger.info(f"Successfully connected to RTSP stream with backend: {backend}")
-                                # Reset position to beginning
-                                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                                 break
                             else:
                                 logger.warning(f"Backend {backend} opened but couldn't read frames")
@@ -135,23 +129,23 @@ class VideoCaptureManager:
                 if cap is None:
                     # If all backends failed, try with default settings one more time
                     logger.info("All backends failed, trying default OpenCV settings...")
-                    try:
-                        cap = cv2.VideoCapture(self.video_path)
-                        if cap.isOpened():
-                            # Basic settings for default capture
-                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                            # Test frame read
-                            ret, test_frame = cap.read()
-                            if not ret or test_frame is None:
-                                logger.error("Default capture opened but can't read frames")
-                                cap.release()
-                                cap = None
-                    except Exception as e:
-                        logger.error(f"Default capture also failed: {e}")
-                        cap = None
+                    cap = cv2.VideoCapture(self.video_path)
                 
                 self.is_rtsp = True
+                                cap.release()
+                            cap = None
+                    except Exception as e:
+                        logger.warning(f"Exception with backend {backend}: {e}")
+                        if cap:
+                            cap.release()
+                        cap = None
                 
+                if cap is None:
+                    # If all backends failed, try with default settings one more time
+                    logger.info("All backends failed, trying default OpenCV settings...")
+                    cap = cv2.VideoCapture(self.video_path)
+                
+                self.is_rtsp = True
             else:
                 # Handle file paths
                 if os.path.exists(self.video_path):
@@ -180,18 +174,16 @@ class VideoCaptureManager:
                         return cap
             
             # Set capture properties for performance
-            if cap and cap.isOpened():
-                if self.is_camera:
-                    # Camera-specific settings
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer for less latency
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-                    cap.set(cv2.CAP_PROP_FPS, self.frame_rate)
-                elif self.is_file:
-                    # File-specific settings
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-                # RTSP settings are already configured above
+            if self.is_camera:
+                # Camera-specific settings
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer for less latency
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+                cap.set(cv2.CAP_PROP_FPS, self.frame_rate)
+            elif self.is_file:
+                # File-specific settings
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
             
             logger.info(f"Video capture initialized successfully with source: {self.video_path}")
             return cap

@@ -182,6 +182,46 @@ class FrameProcessor:
         
         return frame
     
+    def create_test_pattern_frame(self):
+        """Create a test pattern frame for debugging video stream issues.
+        
+        Returns:
+            Frame with test pattern (color bars)
+        """
+        # Create a frame with color bars for debugging
+        frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
+        
+        # Create vertical color bars
+        bar_width = self.resolution[0] // 8
+        colors = [
+            (255, 255, 255),  # White
+            (255, 255, 0),    # Yellow
+            (0, 255, 255),    # Cyan
+            (0, 255, 0),      # Green
+            (255, 0, 255),    # Magenta
+            (255, 0, 0),      # Red
+            (0, 0, 255),      # Blue
+            (0, 0, 0)         # Black
+        ]
+        
+        for i, color in enumerate(colors):
+            x1 = i * bar_width
+            x2 = min((i + 1) * bar_width, self.resolution[0])
+            frame[:, x1:x2] = color
+        
+        # Add text overlay
+        cv2.putText(frame, "RTSP Stream Test Pattern", 
+                   (int(self.resolution[0]/2) - 150, 50), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+        cv2.putText(frame, "If you see this, video processing is working", 
+                   (int(self.resolution[0]/2) - 200, self.resolution[1] - 50), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        
+        # Add timestamp
+        frame = UIUtils.add_timestamp(frame)
+        
+        return frame
+
     def get_door_area(self):
         """Get the current door area coordinates.
         

@@ -13,6 +13,7 @@ from flask import current_app
 from app.services.video.video_capture import VideoCaptureManager
 from app.services.video.frame_processor import FrameProcessor
 from app.services.video.health_monitor import HealthMonitor
+from app.services.video.rtsp_monitor import RTSPStreamMonitor
 from app.services.video.ui_utils import UIUtils
 
 # Configure logging
@@ -35,12 +36,16 @@ class VideoService:
         self.socketio = socketio
         self.video_path = video_path
         self.frame_rate = frame_rate
-        self.resolution = resolution
-        
-        # Initialize subsystems
+        self.resolution = resolution        # Initialize subsystems
         self.capture_manager = VideoCaptureManager(video_path, frame_rate, resolution)
         self.health_monitor = HealthMonitor()
         self.frame_processor = FrameProcessor(detection_model, resolution, frame_rate)
+        
+        # Initialize RTSP stream monitor for automatic reconnection
+        self.rtsp_monitor = RTSPStreamMonitor(self, check_interval=15.0)
+        if self.capture_manager.is_rtsp:
+            self.rtsp_monitor.start()
+            logger.info("Started RTSP stream monitor for automatic reconnection")
         
         # Link components to main service
         self.cap = self.capture_manager.cap
@@ -228,8 +233,7 @@ class VideoService:
                         self.capture_manager.reopen()
                         self.cap = self.capture_manager.cap
                         time.sleep(0.5)
-                
-                # Get and process frame
+                  # Get and process frame
                 frame_bytes = self.get_jpeg_frame()
                 
                 if frame_bytes is not None:
@@ -243,14 +247,22 @@ class VideoService:
                     # If frame capture failed, wait briefly before trying again
                     time.sleep(0.1)
                     
-                    # After multiple failures, yield an error frame
+                    # After multiple failures, yield an error frame or test pattern
                     if self.health_monitor.consecutive_failures > 3:
-                        # Create a black frame with error message
-                        error_frame = self.frame_processor.create_error_frame(self.health_monitor.consecutive_failures)
-                        ret, buffer = cv2.imencode('.jpg', error_frame)
-                        if ret:
-                            yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                        # For RTSP streams, create a test pattern to help debug
+                        if self.is_rtsp:
+                            test_frame = self.frame_processor.create_test_pattern_frame()
+                            ret, buffer = cv2.imencode('.jpg', test_frame)
+                            if ret:
+                                yield (b'--frame\r\n'
+                                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                        else:
+                            # Create a black frame with error message
+                            error_frame = self.frame_processor.create_error_frame(self.health_monitor.consecutive_failures)
+                            ret, buffer = cv2.imencode('.jpg', error_frame)
+                            if ret:
+                                yield (b'--frame\r\n'
+                                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             
             except Exception as e:
                 if current_time - last_error_time > error_message_cooldown:
@@ -352,23 +364,60 @@ class VideoService:
             return False
             
         self.is_running = False
+        
+        # Stop RTSP monitor if running
+        if hasattr(self, 'rtsp_monitor') and self.rtsp_monitor:
+            self.rtsp_monitor.stop()
+            
         if self.thread:
             self.thread.join(timeout=1.0)
             self.thread = None
             
         logger.info("Video capture thread stopped")
         return True
-        
+    
     def _capture_frames(self):
         """Background thread function for continuous frame capture."""
         logger.info("Started continuous frame capture")
         reconnect_backoff = 0.5  # Initial backoff time in seconds
         max_backoff = 5.0  # Maximum backoff time
         
+        # Enhanced RTSP monitoring variables
+        last_rtsp_health_check = time.time()
+        rtsp_health_interval = 30.0  # Check RTSP health every 30 seconds
+        rtsp_timeout_threshold = 60.0  # Consider RTSP dead after 60 seconds without frames
+        consecutive_read_failures = 0
+        max_read_failures = 15  # Allow more failures for RTSP before giving up
+        
         while self.is_running:
             try:
                 # Start timing for FPS calculation
                 frame_start_time = time.time()
+                
+                # Enhanced RTSP health monitoring
+                if self.is_rtsp and (frame_start_time - last_rtsp_health_check) > rtsp_health_interval:
+                    time_since_last_success = frame_start_time - self.health_monitor.last_successful_read
+                    
+                    # If RTSP has been silent for too long, proactively reconnect
+                    if time_since_last_success > rtsp_timeout_threshold and self.health_monitor.last_successful_read > 0:
+                        logger.warning(f"RTSP stream appears stalled - {time_since_last_success:.1f}s without frames, forcing reconnection")
+                        
+                        # Force full RTSP reconnection
+                        self.capture_manager.release()
+                        time.sleep(3.0)  # Give RTSP server time to clean up
+                        self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
+                        self.cap = self.capture_manager.cap
+                        
+                        if self.cap and self.cap.isOpened():
+                            logger.info("Proactive RTSP reconnection successful")
+                            self.is_rtsp = self.capture_manager.is_rtsp
+                            self.is_camera = self.capture_manager.is_camera
+                            self.health_monitor.consecutive_failures = 0
+                            consecutive_read_failures = 0
+                        else:
+                            logger.error("Proactive RTSP reconnection failed")
+                    
+                    last_rtsp_health_check = frame_start_time
                 
                 # Check if we need to reconnect due to health issues
                 if self.health_monitor.should_reconnect():
@@ -379,8 +428,8 @@ class VideoService:
                     # Increase backoff time for next reconnection attempt (exponential backoff)
                     reconnect_backoff = min(reconnect_backoff * 1.5, max_backoff)
                     
-                    # Stop trying after max attempts
-                    if self.health_monitor.exceeded_max_attempts():
+                    # Stop trying after max attempts for non-RTSP sources
+                    if not self.is_rtsp and self.health_monitor.exceeded_max_attempts():
                         logger.error(f"Failed to reconnect after {self.health_monitor.max_reconnect_attempts} attempts")
                         # If we have a demo video file configured, switch to it as fallback
                         demo_path = os.path.join(current_app.static_folder, 'videos', 'demo.mp4')
@@ -418,12 +467,43 @@ class VideoService:
                     if self.is_file:
                         logger.info(f"Video file may have ended, restarting: {self.video_path}")
                         self.capture_manager.reopen()
-                        self.cap = self.capture_manager.cap
-                    # Special handling for RTSP streams
+                        self.cap = self.capture_manager.cap                    # Special handling for RTSP streams with enhanced reconnection
                     elif self.is_rtsp:
-                        logger.info(f"RTSP stream interrupted, reconnecting: {self.video_path}")
+                        logger.warning(f"RTSP stream read failed, attempting enhanced reconnection: {self.video_path}")
+                        
+                        # For RTSP, try multiple reconnection strategies
+                        reconnection_successful = False
+                        
+                        # Strategy 1: Simple reopen
                         self.capture_manager.reopen()
                         self.cap = self.capture_manager.cap
+                        if self.cap and self.cap.isOpened():
+                            # Test if we can actually read a frame
+                            test_ret, test_frame = self.cap.read()
+                            if test_ret and test_frame is not None and test_frame.size > 0:
+                                logger.info("RTSP reconnection successful with simple reopen")
+                                reconnection_successful = True
+                        
+                        # Strategy 2: Full recreation if simple reopen failed
+                        if not reconnection_successful:
+                            logger.info("Simple reopen failed, performing full RTSP recreation")
+                            self.capture_manager.release()
+                            time.sleep(2.0)  # Give RTSP server time to clean up
+                            self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
+                            self.cap = self.capture_manager.cap
+                            if self.cap and self.cap.isOpened():
+                                # Test frame read again
+                                test_ret, test_frame = self.cap.read()
+                                if test_ret and test_frame is not None and test_frame.size > 0:
+                                    logger.info("RTSP reconnection successful with full recreation")
+                                    reconnection_successful = True
+                                    # Reset position to beginning for the test frame
+                                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        
+                        if not reconnection_successful:
+                            logger.error("All RTSP reconnection strategies failed")
+                            # Increase backoff time more aggressively for RTSP
+                            reconnect_backoff = min(reconnect_backoff * 2.0, max_backoff)
                     # For cameras: attempt to reconnect
                     else:
                         logger.info(f"Attempting to reconnect to camera: {self.video_path}")
@@ -432,10 +512,14 @@ class VideoService:
                         
                     time.sleep(reconnect_backoff)
                     continue
-                
-                # Reset health monitoring on successful frame read
+                  # Reset health monitoring on successful frame read
                 self.health_monitor.update_on_success()
                 reconnect_backoff = 0.5  # Reset backoff time after successful read
+                consecutive_read_failures = 0  # Reset read failure counter
+                
+                # Update RTSP monitor if active
+                if hasattr(self, 'rtsp_monitor') and self.rtsp_monitor.is_running:
+                    self.rtsp_monitor.update_frame_time()
                 
                 # Resize and store current frame
                 resized_frame = cv2.resize(frame, self.resolution)

@@ -38,10 +38,13 @@ class HealthMonitor:
             
         Returns:
             Dict with health status information
-        """
-        # Consider connection unhealthy if no successful read in last 5 seconds
-        time_since_last_read = time.time() - self.last_successful_read
-        timeout_threshold = 5.0  # 5 seconds
+        """        # Consider connection unhealthy if no successful read in appropriate timeframe
+        if is_rtsp:
+            timeout_threshold = 30.0  # RTSP streams get 30 seconds
+        elif is_camera:
+            timeout_threshold = 10.0  # Cameras get 10 seconds
+        else:  # is_file
+            timeout_threshold = 5.0   # Files get 5 seconds
         
         connection_timeout = time_since_last_read > timeout_threshold and self.last_successful_read > 0
         

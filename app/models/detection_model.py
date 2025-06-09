@@ -169,58 +169,54 @@ class DetectionModel:
         # Calculate if the person was on either side of door before and after
         prev_x, prev_y = prev_center
         curr_x, curr_y = current_center
-        
+
         # Determine door orientation based on aspect ratio
-        is_vertical_door = door_height > door_width
+        is_vertical_door = door_height > door_width * 1.2  # Use 1.2 ratio to clearly identify vertical doors
         
+        # Calculate the extended detection area (20% wider than door)
+        extension = door_width * 0.2
+        extended_x1 = x1 - extension
+        extended_x2 = x2 + extension
+        
+        # For vertical doors, focus on horizontal movement through the door frame
         if is_vertical_door:
-            # For vertical doors, use zones instead of center line
-            # Create detection zones with buffer for more reliable detection
-            zone_width = door_width * 0.3  # 30% of door width for each zone
-            left_zone_right = x1 + zone_width
-            right_zone_left = x2 - zone_width
-            
-            # Check if both positions are within the door height range
-            if (y1 <= prev_y <= y2) or (y1 <= curr_y <= y2):
-                # Left to right crossing: was in left zone, now in right zone or beyond
-                if (prev_x <= left_zone_right and curr_x >= right_zone_left):
+            # Check if movement is within the valid height range of the door (with small buffer)
+            buffer = door_height * 0.1
+            if ((y1 - buffer) <= prev_y <= (y2 + buffer)) or ((y1 - buffer) <= curr_y <= (y2 + buffer)):
+                # Define entrance and exit zones
+                entrance_zone = (extended_x1, x1 + door_width * 0.25)  # Left side zone
+                exit_zone = (x2 - door_width * 0.25, extended_x2)      # Right side zone
+                
+                # Check left to right movement
+                if (entrance_zone[0] <= prev_x <= entrance_zone[1] and 
+                    curr_x >= exit_zone[0]):
                     return True, "left_to_right"
-                # Right to left crossing: was in right zone, now in left zone or beyond
-                elif (prev_x >= right_zone_left and curr_x <= left_zone_right):
+                    
+                # Check right to left movement
+                if (exit_zone[0] <= prev_x <= exit_zone[1] and 
+                    curr_x <= entrance_zone[1]):
                     return True, "right_to_left"
         else:
-            # For horizontal doors, use zones instead of center line
-            zone_height = door_height * 0.3  # 30% of door height for each zone
-            top_zone_bottom = y1 + zone_height
-            bottom_zone_top = y2 - zone_height
+            # For horizontal doors, use the standard top/bottom detection
+            # Define entrance and exit zones for vertical movement
+            buffer = door_height * 0.2
+            top_zone = (y1 - buffer, y1 + door_height * 0.3)
+            bottom_zone = (y2 - door_height * 0.3, y2 + buffer)
             
-            # Check if both positions are within the door width range
-            if (x1 <= prev_x <= x2) or (x1 <= curr_x <= x2):
-                # Top to bottom crossing: was in top zone, now in bottom zone or beyond
-                if (prev_y <= top_zone_bottom and curr_y >= bottom_zone_top):
+            # Check if movement is within the door width (with small buffer)
+            if ((x1 - door_width * 0.1) <= prev_x <= (x2 + door_width * 0.1)) or \
+               ((x1 - door_width * 0.1) <= curr_x <= (x2 + door_width * 0.1)):
+                
+                # Check top to bottom movement
+                if (top_zone[0] <= prev_y <= top_zone[1] and 
+                    curr_y >= bottom_zone[0]):
                     return True, "top_to_bottom"
-                # Bottom to top crossing: was in bottom zone, now in top zone or beyond
-                elif (prev_y >= bottom_zone_top and curr_y <= top_zone_bottom):
+                    
+                # Check bottom to top movement
+                if (bottom_zone[0] <= prev_y <= bottom_zone[1] and 
+                    curr_y <= top_zone[1]):
                     return True, "bottom_to_top"
-        
-        # Fallback to center line detection for edge cases
-        door_center_x = (x1 + x2) / 2
-        door_center_y = (y1 + y2) / 2
-        
-        # Check if person crossed the horizontal center line (with door area constraint)
-        if (y1 <= prev_y <= y2) and (y1 <= curr_y <= y2):
-            if (prev_x < door_center_x and curr_x >= door_center_x):
-                return True, "left_to_right"
-            elif (prev_x >= door_center_x and curr_x < door_center_x):
-                return True, "right_to_left"
-        
-        # Check if person crossed the vertical center line (with door area constraint)
-        if (x1 <= prev_x <= x2) and (x1 <= curr_x <= x2):
-            if (prev_y < door_center_y and curr_y >= door_center_y):
-                return True, "top_to_bottom"
-            elif (prev_y >= door_center_y and curr_y < door_center_y):
-                return True, "bottom_to_top"
-        
+                    
         return False, None
 
     def is_in_door_area(self, center):

@@ -1557,38 +1557,81 @@ a, button, input, select, textarea, .btn {
     z-index: 10;
 }
 
+/* Enhanced refresh button states */
 .refresh-btn {
     position: absolute;
     top: var(--spacing-sm);
     right: var(--spacing-sm);
     z-index: 5;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: all 0.3s ease;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
 }
 
-.video-container:hover .refresh-btn {
+.refresh-btn:hover {
+    background: rgba(0, 0, 0, 0.9);
+    transform: scale(1.05);
+}
+
+.refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.refresh-btn .btn-icon {
+    display: inline-block;
+    transition: transform 0.3s ease;
+}
+
+.refresh-btn:disabled .btn-icon {
+    animation: spin 1s linear infinite;
+}
+
+.video-container:hover .refresh-btn,
+.video-container.loading .refresh-btn,
+.video-container.error .refresh-btn {
     opacity: 1;
 }
 
-/* Fallback video indicator */
-.fallback-indicator {
-    position: absolute;
-    top: var(--spacing-sm);
-    left: var(--spacing-sm);
-    background: rgba(245, 158, 11, 0.9);
-    color: white;
-    padding: var(--spacing-xs) var(--spacing-md);
-    border-radius: var(--radius-md);
-    font-weight: 600;
-    z-index: 5;
-    font-size: 0.875rem;
-    animation: pulse 2s infinite;
+/* Enhanced loading state for video refresh */
+.video-container.loading {
+    position: relative;
 }
 
-@keyframes pulse {
-    0% { opacity: 0.8; }
-    50% { opacity: 1; }
-    100% { opacity: 0.8; }
+.video-container.loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 5;
+}
+
+.video-container.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top: 3px solid var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    z-index: 10;
 }
 
 /* Notification system */

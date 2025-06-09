@@ -1,10 +1,12 @@
 """
 Main application routes for web interface
 """
-from flask import Blueprint, render_template, redirect, url_for, request, Response, current_app, session, flash
+from flask import Blueprint, render_template, redirect, url_for, request, Response, current_app, session, flash, jsonify
 import threading
 import logging
 import os
+import cv2
+import numpy as np
 
 from app.services.video_service import VideoService
 from app.models.detection_model import DetectionModel
@@ -358,3 +360,138 @@ def toggle_processing_device():
     
     # Return device information
     return result
+
+@main_bp.route('/debug/rtsp_test')
+def rtsp_test():
+    """Debug endpoint to test RTSP connection and display diagnostics."""
+    global video_service
+    
+    # Check if services are initialized
+    if video_service is None:
+        initialize_services()
+    
+    # Get current settings
+    settings = fetch_camera_settings()
+    
+    diagnostics = {
+        'rtsp_url': settings.get('camera_url', 'Not configured'),
+        'video_service_initialized': video_service is not None,
+        'capture_opened': video_service.cap.isOpened() if video_service and video_service.cap else False,
+        'is_rtsp': video_service.is_rtsp if video_service else False,
+        'health_info': video_service.check_connection_health() if video_service else None,
+        'source_info': video_service.capture_manager.get_source_info() if video_service else None,
+        'opencv_version': cv2.__version__,
+        'opencv_backends': []
+    }
+    
+    # Test OpenCV backends availability
+    backends = [
+        ('FFMPEG', cv2.CAP_FFMPEG),
+        ('GSTREAMER', cv2.CAP_GSTREAMER),
+        ('DSHOW', cv2.CAP_DSHOW)
+    ]
+    
+    for name, backend in backends:
+        try:
+            test_cap = cv2.VideoCapture()
+            test_cap.open('', backend)
+            diagnostics['opencv_backends'].append(f"{name}: Available")
+            test_cap.release()
+        except:
+            diagnostics['opencv_backends'].append(f"{name}: Not available")
+    
+    return render_template('debug_rtsp.html', diagnostics=diagnostics)
+
+@main_bp.route('/debug/test_pattern')
+def debug_test_pattern():
+    """Generate a test pattern image for debugging."""
+    global video_service
+    
+    if video_service is None:
+        initialize_services()
+    
+    # Create test pattern
+    test_frame = video_service.frame_processor.create_test_pattern_frame()
+    
+    # Convert to JPEG
+    ret, buffer = cv2.imencode('.jpg', test_frame)
+    if not ret:
+        # Create a simple error frame if encoding fails
+        error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(error_frame, "Test Pattern Generation Failed", (100, 240), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        ret, buffer = cv2.imencode('.jpg', error_frame)
+    
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+@main_bp.route('/refresh_video', methods=['POST'])
+def refresh_video():
+    """Refresh the video service and reinitialize capture."""
+    global video_service
+    
+    try:
+        if video_service is None:
+            initialize_services()
+            return jsonify({'success': True, 'message': 'Video service initialized'})
+        
+        # Get current settings
+        settings = fetch_camera_settings()
+        
+        # Stop current video service if running
+        if hasattr(video_service, 'is_running') and video_service.is_running:
+            video_service.stop_capture_thread()
+        
+        # Update video service settings to force reinitialize
+        video_source = settings.get('video_source', 'camera')
+        if video_source == 'demo':
+            video_path = 'app/static/videos/demo.mp4'
+        else:
+            video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+            
+        frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
+        
+        # Parse resolution
+        resolution_str = settings.get('resolution', None)
+        if resolution_str and isinstance(resolution_str, str) and ',' in resolution_str:
+            width, height = map(int, resolution_str.split(','))
+            resolution = (width, height)
+        else:
+            resolution = current_app.config['RESOLUTION']
+        
+        # Update settings (this will reinitialize capture)
+        video_service.update_settings(video_path, frame_rate, resolution)
+        
+        # Restart capture thread
+        video_service.start_capture_thread()
+        
+        logger.info("Video service refreshed successfully")
+        return jsonify({'success': True, 'message': 'Video service refreshed successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error refreshing video service: {e}")
+        return jsonify({'success': False, 'message': f'Error refreshing video: {str(e)}'})
+
+@main_bp.route('/stream_health')
+def stream_health():
+    """Get stream health information."""
+    global video_service
+    
+    if video_service is None:
+        return jsonify({'error': 'Video service not initialized'})
+    
+    health_info = {
+        'video_service_running': video_service.is_running,
+        'is_rtsp': video_service.is_rtsp,
+        'video_path': video_service.video_path,
+        'health_monitor': video_service.health_monitor.check_health(
+            is_camera=video_service.is_camera,
+            is_rtsp=video_service.is_rtsp,
+            is_file=video_service.is_file
+        )
+    }
+    
+    # Add RTSP monitor status if available
+    if hasattr(video_service, 'rtsp_monitor') and video_service.rtsp_monitor:
+        health_info['rtsp_monitor'] = video_service.rtsp_monitor.get_status()
+    
+    return jsonify(health_info)

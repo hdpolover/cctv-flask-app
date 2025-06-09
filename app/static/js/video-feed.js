@@ -77,11 +77,14 @@ class VideoFeed {
             } catch (error) {
                 console.error('Error updating counters:', error);
             }
-        });
-
-        // Handle system status updates
+        });        // Handle system status updates
         this.socket.on('system_status', (status) => {
             this.updateSystemStatus(status);
+        });
+        
+        // Handle RTSP monitor status updates
+        this.socket.on('rtsp_status', (status) => {
+            this.updateRTSPStatus(status);
         });
     }
 
@@ -249,6 +252,21 @@ class VideoFeed {
         }
     }
 
+    updateRTSPStatus(status) {
+        // Update RTSP monitor status in the UI
+        if (status.monitor_active) {
+            this.showNotification('RTSP monitor active - automatic reconnection enabled', 'info');
+        }
+        
+        if (status.reconnection_performed) {
+            this.showNotification('RTSP stream automatically reconnected', 'success');
+        }
+        
+        if (status.stream_unhealthy) {
+            this.showNotification('RTSP stream health warning - monitoring for reconnection', 'warning');
+        }
+    }
+
     attemptReconnect() {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
@@ -266,14 +284,12 @@ class VideoFeed {
             this.updateConnectionStatus('failed', 'Koneksi gagal - Silakan refresh halaman');
             this.showNotification('Koneksi terputus. Silakan refresh halaman.', 'error');
         }
-    }
-
-    addRefreshButton() {
+    }    addRefreshButton() {
         const refreshBtn = document.createElement('button');
         refreshBtn.id = 'refresh-feed';
         refreshBtn.className = 'btn btn-secondary refresh-btn';
         refreshBtn.innerHTML = '<span class="btn-icon">🔄</span> Refresh';
-        refreshBtn.title = 'Refresh video feed';
+        refreshBtn.title = 'Refresh video feed (or press R)';
 
         refreshBtn.addEventListener('click', () => {
             this.refreshVideoFeed();
@@ -283,26 +299,83 @@ class VideoFeed {
         if (videoContainer) {
             videoContainer.appendChild(refreshBtn);
         }
-    }
-
-    refreshVideoFeed() {
+        
+        // Show initial tip about refresh shortcut
+        setTimeout(() => {
+            this.showNotification('Tip: Press "R" to refresh video feed or click the refresh button', 'info');
+        }, 3000);
+    }refreshVideoFeed() {
+        const refreshBtn = document.getElementById('refresh-feed');
         const videoFeed = document.getElementById('video-feed');
+        
+        if (refreshBtn) {
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<span class="btn-icon">⏳</span> Refreshing...';
+        }
+        
         if (videoFeed) {
             this.showVideoLoading();
+        }
 
-            // Force refresh by adding timestamp
-            const currentSrc = videoFeed.src;
-            if (currentSrc.includes('?')) {
-                videoFeed.src = currentSrc.split('?')[0] + '?t=' + Date.now();
+        // Call backend to refresh video service
+        fetch('/refresh_video', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                this.showNotification(data.message, 'success');
+                
+                // Force refresh the video feed
+                if (videoFeed) {
+                    const currentSrc = videoFeed.src;
+                    if (currentSrc.includes('?')) {
+                        videoFeed.src = currentSrc.split('?')[0] + '?t=' + Date.now();
+                    } else {
+                        videoFeed.src = currentSrc + '?t=' + Date.now();
+                    }
+                }
+                
+                // Reconnect socket if needed
+                if (!this.isConnected) {
+                    this.socket.connect();
+                }
+                
+                // Reset connection status
+                this.updateConnectionStatus('connected', 'Video service refreshed successfully');
             } else {
-                videoFeed.src = currentSrc + '?t=' + Date.now();
+                this.showNotification('Failed to refresh video: ' + data.message, 'error');
             }
-        }
-
-        // Reconnect socket if needed
-        if (!this.isConnected) {
-            this.socket.connect();
-        }
+        })
+        .catch(error => {
+            console.error('Error refreshing video:', error);
+            this.showNotification('Network error while refreshing video', 'error');
+            
+            // Fallback: just refresh the image source
+            if (videoFeed) {
+                const currentSrc = videoFeed.src;
+                if (currentSrc.includes('?')) {
+                    videoFeed.src = currentSrc.split('?')[0] + '?t=' + Date.now();
+                } else {
+                    videoFeed.src = currentSrc + '?t=' + Date.now();
+                }
+            }
+        })
+        .finally(() => {
+            // Re-enable refresh button
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = '<span class="btn-icon">🔄</span> Refresh';
+            }
+            
+            // Remove loading state after a delay
+            setTimeout(() => {
+                this.removeVideoLoading();
+            }, 1000);
+        });
     }
 
     showVideoLoading() {
