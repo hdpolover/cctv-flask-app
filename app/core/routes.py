@@ -7,6 +7,7 @@ import logging
 import os
 import cv2
 import numpy as np
+import time
 
 from app.services.video_service import VideoService
 from app.models.detection_model import DetectionModel
@@ -22,73 +23,90 @@ main_bp = Blueprint('main', __name__)
 # Shared resources
 detection_model = None
 video_service = None
+_initialization_lock = threading.Lock()
+_initialized = False
 
 def initialize_services():
     """Initialize shared services before first request."""
-    global detection_model, video_service
+    global detection_model, video_service, _initialized
     
-    # Get settings from database
-    settings = fetch_camera_settings()
-    
-    # Initialize detection model if not already done
-    if detection_model is None:
-        # Create config with settings
-        config = current_app.config.copy()
-        # Add GPU preference from settings if available
-        if settings and 'use_gpu' in settings:
-            config['USE_GPU'] = settings['use_gpu']
+    # Use lock to prevent multiple simultaneous initializations
+    with _initialization_lock:
+        # Double-check pattern - if already initialized, return
+        if _initialized:
+            logger.info("Services already initialized, skipping...")
+            return
             
-        detection_model = DetectionModel(config)
-        logger.info("Detection model initialized")
-    
-    # Initialize video service if not already done
-    if video_service is None:
-        # Get camera settings
-        video_source = settings.get('video_source', 'camera')
-        if video_source == 'demo':
-            video_path = 'app/static/videos/demo.mp4'
-        else:
-            video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+        logger.info("Starting service initialization...")
+        
+        # Get settings from database
+        settings = fetch_camera_settings()
+        
+        # Initialize detection model if not already done
+        if detection_model is None:
+            # Create config with settings
+            config = current_app.config.copy()
+            # Add GPU preference from settings if available
+            if settings and 'use_gpu' in settings:
+                config['USE_GPU'] = settings['use_gpu']
+                
+            detection_model = DetectionModel(config)
+            logger.info("Detection model initialized")
+        
+        # Initialize video service if not already done
+        if video_service is None:
+            # Get camera settings
+            video_source = settings.get('video_source', 'camera')
+            if video_source == 'demo':
+                # Use webcam as default instead of demo video
+                video_path = current_app.config['VIDEO_PATH']  # This is 0 (webcam)
+            else:
+                video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+                
+            frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
             
-        frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
-        
-        # Parse resolution
-        resolution_str = settings.get('resolution', None)
-        if resolution_str and isinstance(resolution_str, str) and ',' in resolution_str:
-            width, height = map(int, resolution_str.split(','))
-            resolution = (width, height)
-        else:
-            resolution = current_app.config['RESOLUTION']
-        
-        # Create video service
-        video_service = VideoService(detection_model, socketio, 
-                                     video_path, frame_rate, resolution)
-        
-        # Start capture thread
-        video_service.start_capture_thread()
-        logger.info("Video service initialized and started")
-        
-        # Set door area if configured
-        if settings and 'door_area' in settings:
-            door_area = settings['door_area']
-            inside_direction = settings.get('inside_direction', 'right')
+            # Parse resolution
+            resolution_str = settings.get('resolution', None)
+            if resolution_str and isinstance(resolution_str, str) and ',' in resolution_str:
+                width, height = map(int, resolution_str.split(','))
+                resolution = (width, height)
+            else:
+                resolution = current_app.config['RESOLUTION']
             
-            try:
-                x1 = door_area.get('x1')
-                y1 = door_area.get('y1')
-                x2 = door_area.get('x2')
-                y2 = door_area.get('y2')
-                detection_model.set_door_area(x1, y1, x2, y2)
-                detection_model.set_inside_direction(inside_direction)
-                logger.info(f"Door area set to: {(x1, y1, x2, y2)}, inside: {inside_direction}")
-            except Exception as e:
-                logger.error(f"Error setting door area: {e}")
+            # Create video service
+            video_service = VideoService(detection_model, socketio, 
+                                         video_path, frame_rate, resolution)
+            
+            # Start capture thread
+            video_service.start_capture_thread()
+            logger.info("Video service initialized and started")
+            
+            # Set door area if configured
+            if settings and 'door_area' in settings:
+                door_area = settings['door_area']
+                inside_direction = settings.get('inside_direction', 'right')
+                
+                try:
+                    x1 = door_area.get('x1')
+                    y1 = door_area.get('y1')
+                    x2 = door_area.get('x2')
+                    y2 = door_area.get('y2')
+                    detection_model.set_door_area(x1, y1, x2, y2)
+                    detection_model.set_inside_direction(inside_direction)
+                    logger.info(f"Door area set to: {(x1, y1, x2, y2)}, inside: {inside_direction}")
+                except Exception as e:
+                    logger.error(f"Error setting door area: {e}")
+        
+        # Mark as initialized
+        _initialized = True
+        logger.info("Service initialization completed successfully")
 
 # Register initialization function to run before first request
 @main_bp.before_app_request
 def initialize_before_request():
     """Initialize services if not already initialized."""
-    if detection_model is None or video_service is None:
+    global _initialized
+    if not _initialized:
         initialize_services()
 
 @main_bp.route('/')
@@ -113,6 +131,9 @@ def login():
 def home():
     """Home page with video feed."""
     global detection_model, video_service
+    
+    # Initialize services if not already done
+    initialize_services()
     
     # Get current counts
     entries = 0
@@ -186,9 +207,8 @@ def raw_video_feed():
     """Raw video streaming route without detection for camera settings."""
     global video_service
     
-    # Check if services are initialized
-    if video_service is None:
-        initialize_services()
+    # Initialize services if not already done
+    initialize_services()
         
     return Response(video_service.generate_raw_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
@@ -204,9 +224,8 @@ def camera_settings():
     """Camera settings page."""
     global video_service
     
-    # Check if services are initialized
-    if video_service is None:
-        initialize_services()
+    # Initialize services if not already done
+    initialize_services()
     
     if request.method == 'POST':
         try:
@@ -434,41 +453,56 @@ def refresh_video():
             initialize_services()
             return jsonify({'success': True, 'message': 'Video service initialized'})
         
-        # Get current settings
-        settings = fetch_camera_settings()
+        # Prevent multiple rapid refresh attempts
+        if hasattr(video_service, '_refreshing') and video_service._refreshing:
+            return jsonify({'success': False, 'message': 'Video refresh already in progress'})
         
-        # Stop current video service if running
-        if hasattr(video_service, 'is_running') and video_service.is_running:
-            video_service.stop_capture_thread()
+        # Mark as refreshing
+        video_service._refreshing = True
         
-        # Update video service settings to force reinitialize
-        video_source = settings.get('video_source', 'camera')
-        if video_source == 'demo':
-            video_path = 'app/static/videos/demo.mp4'
-        else:
-            video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+        try:
+            # Get current settings
+            settings = fetch_camera_settings()
             
-        frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
-        
-        # Parse resolution
-        resolution_str = settings.get('resolution', None)
-        if resolution_str and isinstance(resolution_str, str) and ',' in resolution_str:
-            width, height = map(int, resolution_str.split(','))
-            resolution = (width, height)
-        else:
-            resolution = current_app.config['RESOLUTION']
-        
-        # Update settings (this will reinitialize capture)
-        video_service.update_settings(video_path, frame_rate, resolution)
-        
-        # Restart capture thread
-        video_service.start_capture_thread()
-        
-        logger.info("Video service refreshed successfully")
-        return jsonify({'success': True, 'message': 'Video service refreshed successfully'})
+            # Stop current video service if running
+            if hasattr(video_service, 'is_running') and video_service.is_running:
+                video_service.stop_capture_thread()
+                time.sleep(0.5)  # Give it time to stop
+            
+            # Update video service settings to force reinitialize
+            video_source = settings.get('video_source', 'camera')
+            if video_source == 'demo':
+                video_path = 'app/static/videos/demo.mp4'
+            else:
+                video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
+                
+            frame_rate = int(settings.get('frame_rate', current_app.config['FRAME_RATE']))
+            
+            # Parse resolution
+            resolution_str = settings.get('resolution', None)
+            if resolution_str and isinstance(resolution_str, str) and ',' in resolution_str:
+                width, height = map(int, resolution_str.split(','))
+                resolution = (width, height)
+            else:
+                resolution = current_app.config['RESOLUTION']
+            
+            # Update settings (this will reinitialize capture)
+            video_service.update_settings(video_path, frame_rate, resolution)
+            
+            # Restart capture thread
+            video_service.start_capture_thread()
+            
+            logger.info("Video service refreshed successfully")
+            return jsonify({'success': True, 'message': 'Video service refreshed successfully'})
+            
+        finally:
+            # Always clear refreshing flag
+            video_service._refreshing = False
         
     except Exception as e:
         logger.error(f"Error refreshing video service: {e}")
+        if video_service:
+            video_service._refreshing = False
         return jsonify({'success': False, 'message': f'Error refreshing video: {str(e)}'})
 
 @main_bp.route('/stream_health')
@@ -495,3 +529,11 @@ def stream_health():
         health_info['rtsp_monitor'] = video_service.rtsp_monitor.get_status()
     
     return jsonify(health_info)
+
+@main_bp.route('/test-websocket')
+def test_websocket():
+    """Test page for WebSocket debugging."""
+    from flask import send_file
+    import os
+    test_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'test_websocket.html')
+    return send_file(test_file)

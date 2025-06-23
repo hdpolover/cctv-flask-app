@@ -256,3 +256,32 @@ def log_system_health():
     except Exception as e:
         logger.exception(f"Error logging system health: {str(e)}")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 400
+
+@api_bp.route('/video-status', methods=['GET'])
+def get_video_status():
+    """Get current video source status including fallback information."""
+    from app.core.routes import video_service
+    
+    if video_service:
+        try:
+            status = video_service.get_source_status()
+            return jsonify(status)
+        except Exception as e:
+            logger.error(f"Error getting video status: {e}")
+            return jsonify({
+                'source_type': 'unknown',
+                'is_fallback_active': True,
+                'fallback_reason': 'Error retrieving status',
+                'original_video_path': 'unknown',
+                'current_path': 'unknown',
+                'is_connected': False
+            }), 500
+    
+    return jsonify({
+        'source_type': 'unknown',
+        'is_fallback_active': False,
+        'fallback_reason': None,
+        'original_video_path': None,
+        'current_path': None,
+        'is_connected': False
+    })

@@ -49,6 +49,69 @@
         border: 1px solid rgba(239, 68, 68, 0.2);
     }
 
+    /* Direction arrows for door area configuration */
+    .direction-arrow {
+        position: absolute;
+        z-index: 200;
+        pointer-events: none;
+    }
+
+    .arrow {
+        position: absolute;
+        z-index: 210;
+        font-size: 24px;
+        font-weight: bold;
+        color: var(--primary-color);
+        text-shadow: 
+            -1px -1px 0 #fff,
+            1px -1px 0 #fff,
+            -1px 1px 0 #fff,
+            1px 1px 0 #fff,
+            2px 2px 4px rgba(0, 0, 0, 0.3);
+        cursor: help;
+        transform: translate(-50%, -50%);
+        transition: all 0.3s ease;
+        animation: pulse-arrow 2s infinite;
+    }
+
+    .arrow:hover {
+        transform: translate(-50%, -50%) scale(1.2);
+        color: var(--primary-dark);
+    }
+
+    .left-arrow, .right-arrow {
+        top: 50%;
+    }
+
+    .top-arrow, .bottom-arrow {
+        left: 50%;
+    }
+
+    .left-arrow {
+        transform: translate(-100%, -50%);
+    }
+
+    .right-arrow {
+        transform: translate(0%, -50%);
+    }
+
+    .top-arrow {
+        transform: translate(-50%, -100%);
+    }
+
+    .bottom-arrow {
+        transform: translate(-50%, 0%);
+    }
+
+    @keyframes pulse-arrow {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.6;
+        }
+    }
+
     /* Toast notifications */
     .toast-container {
         position: fixed;
@@ -291,6 +354,48 @@
         font-size: 0.95rem;
         line-height: 1.5;
     }
+
+    /* Camera status indicator styles */
+    #camera-status-indicator {
+        transition: all 0.3s ease;
+        backdrop-filter: blur(5px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    #status-dot {
+        transition: background-color 0.3s ease;
+    }
+
+    .status-connecting #status-dot {
+        background: #f59e0b;
+        animation: pulse-status 1.5s infinite;
+    }
+
+    .status-healthy #status-dot {
+        background: #10b981;
+    }
+
+    .status-warning #status-dot {
+        background: #f59e0b;
+    }
+
+    .status-error #status-dot {
+        background: #ef4444;
+    }
+
+    @keyframes pulse-status {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    /* Enhanced video feed styles */
+    #video-feed {
+        transition: filter 0.3s ease;
+    }
+
+    .video-unhealthy #video-feed {
+        filter: saturate(0.7) brightness(0.9);
+    }
 </style>
 {% endblock %}
 
@@ -429,8 +534,34 @@
 
         <div class="video-container">
             <div id="video-wrapper">
-                <img src="{{ url_for('main.raw_video_feed') }}" id="video-feed" alt="Raw Video Feed">
+                <!-- Camera Status Indicator -->
+                <div id="camera-status-indicator" style="position: absolute; top: 10px; right: 10px; z-index: 300; 
+                     background: rgba(0, 0, 0, 0.7); padding: 8px 12px; border-radius: 20px; 
+                     display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: white;">
+                    <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #10b981;"></div>
+                    <span id="status-text">Connecting...</span>
+                </div>
+                
+                <img src="{{ url_for('main.raw_video_feed') }}" id="video-feed" alt="Raw Video Feed" 
+                     onload="handleVideoFeedLoad()" 
+                     onerror="handleVideoFeedError()"
+                     style="max-width: 100%; height: auto; display: block;">
                 <div id="selection-box" style="display: none;"></div>
+                
+                <!-- ...existing error and loading messages... -->
+                <div id="video-error-message" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                     background: rgba(239, 68, 68, 0.9); color: white; padding: 16px; border-radius: 8px; text-align: center; z-index: 10;">
+                    <div style="font-weight: bold; margin-bottom: 8px;">📹 Camera Preview Unavailable</div>
+                    <div style="font-size: 14px;">Please check your camera settings and try refreshing the page</div>
+                    <button onclick="refreshVideoFeed()" style="margin-top: 12px; background: white; color: #ef4444; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                        🔄 Retry
+                    </button>
+                </div>
+                <div id="video-loading-message" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                     background: rgba(59, 130, 246, 0.9); color: white; padding: 16px; border-radius: 8px; text-align: center; z-index: 10;">
+                    <div style="font-weight: bold; margin-bottom: 8px;">📹 Loading Camera Preview...</div>
+                    <div style="font-size: 14px;">Please wait while we initialize the video feed</div>
+                </div>
             </div>
         </div>
 
@@ -531,6 +662,166 @@
         if (errorMsg) {
             showToast('❌ ' + decodeURIComponent(errorMsg), 'error');
         }
+    });
+
+    // Enhanced video feed handling functions with status monitoring
+    let videoStatusInterval = null;
+    let connectionHealthy = true;
+    let statusCheckInitialized = false;
+    
+    function handleVideoFeedLoad() {
+        console.log('Video feed loaded successfully');
+        // Hide loading message and show video
+        document.getElementById('video-loading-message').style.display = 'none';
+        document.getElementById('video-error-message').style.display = 'none';
+        document.getElementById('video-feed').style.display = 'block';
+        
+        // Update status indicator
+        updateCameraStatus('healthy', 'Connected');
+        
+        // Start monitoring connection health (only if not already started)
+        if (!statusCheckInitialized) {
+            startConnectionMonitoring();
+            statusCheckInitialized = true;
+        }
+        
+        // Show success toast
+        showToast('📹 Camera preview loaded successfully!', 'success');
+    }
+
+    function handleVideoFeedError() {
+        console.error('Video feed failed to load');
+        // Hide loading message and show error
+        document.getElementById('video-loading-message').style.display = 'none';
+        document.getElementById('video-error-message').style.display = 'block';
+        document.getElementById('video-feed').style.display = 'none';
+        
+        // Update status indicator
+        updateCameraStatus('error', 'Disconnected');
+        
+        // Stop monitoring if running
+        if (videoStatusInterval) {
+            clearInterval(videoStatusInterval);
+        }
+        
+        // Show error toast
+        showToast('❌ Failed to load camera preview. Check camera settings.', 'error');
+    }
+
+    function updateCameraStatus(status, text) {
+        const indicator = document.getElementById('camera-status-indicator');
+        const statusText = document.getElementById('status-text');
+        const videoWrapper = document.getElementById('video-wrapper');
+        
+        // Remove all status classes
+        indicator.className = '';
+        videoWrapper.classList.remove('video-unhealthy');
+        
+        // Add new status class
+        indicator.classList.add(`status-${status}`);
+        statusText.textContent = text;
+        
+        // Add visual feedback for unhealthy connections
+        if (status === 'warning' || status === 'error') {
+            videoWrapper.classList.add('video-unhealthy');
+        }
+        
+        connectionHealthy = status === 'healthy';
+    }
+
+    function startConnectionMonitoring() {
+        // Clear any existing interval to prevent multiple instances
+        if (videoStatusInterval) {
+            clearInterval(videoStatusInterval);
+            videoStatusInterval = null;
+        }
+        
+        console.log('Starting connection monitoring...');
+        
+        // Monitor connection health every 10 seconds
+        videoStatusInterval = setInterval(() => {
+            checkConnectionHealth();
+        }, 10000);
+    }
+
+    function checkConnectionHealth() {
+        // Check if video feed is still loading properly
+        const videoFeed = document.getElementById('video-feed');
+        
+        if (videoFeed && videoFeed.complete) {
+            if (videoFeed.naturalWidth === 0) {
+                // Video appears broken
+                updateCameraStatus('warning', 'Connection Issues');
+                console.warn('Video feed appears broken, may be reconnecting...');
+            } else if (!connectionHealthy) {
+                // Video recovered
+                updateCameraStatus('healthy', 'Connected');
+                console.log('Video feed recovered');
+                showToast('📹 Camera connection restored', 'success');
+            }
+        }
+    }
+
+    function refreshVideoFeed() {
+        console.log('Refreshing video feed...');
+        // Show loading message
+        document.getElementById('video-loading-message').style.display = 'block';
+        document.getElementById('video-error-message').style.display = 'none';
+        
+        // Update status
+        updateCameraStatus('connecting', 'Reconnecting...');
+        
+        // Force reload the image by changing its source
+        const videoFeed = document.getElementById('video-feed');
+        const currentSrc = videoFeed.src;
+        
+        // Add timestamp to force refresh
+        const timestamp = new Date().getTime();
+        if (currentSrc.includes('?')) {
+            videoFeed.src = currentSrc.split('?')[0] + '?t=' + timestamp;
+        } else {
+            videoFeed.src = currentSrc + '?t=' + timestamp;
+        }
+        
+        showToast('🔄 Refreshing camera preview...', 'info');
+    }
+
+    // Check video feed status periodically
+    function checkVideoFeedStatus() {
+        const videoFeed = document.getElementById('video-feed');
+        if (videoFeed && videoFeed.complete && videoFeed.naturalWidth === 0) {
+            console.warn('Video feed appears broken, showing error');
+            handleVideoFeedError();
+        }
+    }
+
+    // Start checking video feed status after page load (prevent duplicate)
+    let statusCheckTimer = null;
+    setTimeout(() => {
+        // Only initialize if not already done
+        if (!statusCheckInitialized) {
+            // Initial status check
+            updateCameraStatus('connecting', 'Initializing...');
+            
+            checkVideoFeedStatus();
+            // Check periodically (only if not already monitoring)
+            if (!videoStatusInterval) {
+                statusCheckTimer = setInterval(checkVideoFeedStatus, 10000); // Check every 10 seconds
+            }
+        }
+    }, 2000);
+
+    // Clean up intervals when page is unloaded
+    window.addEventListener('beforeunload', function() {
+        if (videoStatusInterval) {
+            clearInterval(videoStatusInterval);
+            videoStatusInterval = null;
+        }
+        if (statusCheckTimer) {
+            clearInterval(statusCheckTimer);
+            statusCheckTimer = null;
+        }
+        console.log('Cleaned up video monitoring intervals');
     });
 
     function toggleCameraFields(value) {

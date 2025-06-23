@@ -139,3 +139,56 @@ class UIUtils:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 120, 255), 2)
         
         return frame
+    
+    @staticmethod
+    def add_fallback_warning(frame, warning_text="DEMO MODE - NO LIVE FEED"):
+        """Add a warning overlay when running in fallback/demo mode.
+        
+        Args:
+            frame: Input video frame
+            warning_text: Text to display in the warning
+            
+        Returns:
+            Frame with warning overlay added
+        """
+        if frame is None:
+            return None
+            
+        try:
+            h, w = frame.shape[:2]
+            
+            # Get text size for positioning
+            font_scale = 0.7
+            thickness = 2
+            text_size = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+            
+            # Position for center-top
+            text_x = (w - text_size[0]) // 2
+            text_y = 50
+            
+            # Create background rectangle
+            bg_margin = 10
+            bg_x1 = text_x - bg_margin
+            bg_y1 = text_y - text_size[1] - bg_margin
+            bg_x2 = text_x + text_size[0] + bg_margin
+            bg_y2 = text_y + bg_margin
+            
+            # Draw semi-transparent background
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 255), -1)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            
+            # Draw border
+            cv2.rectangle(frame, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 255), 2)
+            
+            # Add warning text with shadow
+            cv2.putText(frame, warning_text, (text_x+1, text_y+1), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness+1)  # Shadow
+            cv2.putText(frame, warning_text, (text_x, text_y), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)  # Text
+                       
+            return frame
+            
+        except Exception as e:
+            logger.exception(f"Error adding fallback warning: {e}")
+            return frame

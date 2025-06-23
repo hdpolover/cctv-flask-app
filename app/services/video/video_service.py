@@ -41,6 +41,10 @@ class VideoService:
         self.health_monitor = HealthMonitor()
         self.frame_processor = FrameProcessor(detection_model, resolution, frame_rate)
         
+        # Initialize health monitor with first successful read
+        if self.capture_manager.cap and self.capture_manager.cap.isOpened():
+            self.health_monitor.update_on_success()
+        
         # Initialize RTSP stream monitor for automatic reconnection
         self.rtsp_monitor = RTSPStreamMonitor(self, check_interval=15.0)
         if self.capture_manager.is_rtsp:
@@ -52,6 +56,11 @@ class VideoService:
         self.is_file = self.capture_manager.is_file
         self.is_rtsp = self.capture_manager.is_rtsp
         self.is_camera = self.capture_manager.is_camera
+        
+        # Track fallback status
+        self.original_video_path = video_path  # Keep track of original source
+        self.is_fallback_active = False
+        self.fallback_reason = None
         
         # Threading control
         self.is_running = False
@@ -88,6 +97,18 @@ class VideoService:
         
         # If video source changed, reinitialize the capture
         if restart_capture:
+            logger.info(f"Video source changed, reinitializing capture manager: {self.video_path}")
+            
+            # Stop capture thread if running
+            was_running = self.is_running
+            if was_running:
+                self.stop_capture_thread()
+                time.sleep(0.5)  # Give thread time to stop
+            
+            # Release old capture resources
+            if hasattr(self, 'capture_manager') and self.capture_manager:
+                self.capture_manager.release()
+            
             # Reinitialize the capture manager
             self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
             
@@ -100,6 +121,10 @@ class VideoService:
             # Reset health monitor
             self.health_monitor = HealthMonitor()
             
+            # Restart capture thread if it was running
+            if was_running:
+                self.start_capture_thread()
+            
         logger.info(f"Video settings updated: path={self.video_path}, "
                    f"frame_rate={self.frame_rate}, resolution={self.resolution}")
     
@@ -109,27 +134,39 @@ class VideoService:
         Returns:
             Current video frame or None if not available
         """
-        # Return cached frame if available
-        if self.current_frame is not None:
+        # Return cached frame if available and recent (within last 2 seconds)
+        current_time = time.time()
+        if (self.current_frame is not None and 
+            current_time - self.last_processed_time < 2.0):
             return self.current_frame
             
         # Check if capture is valid
         if not self.cap or not self.cap.isOpened():
             logger.warning("Capture not initialized or opened in get_frame")
-            self.health_monitor.update_on_failure()
-            return None
+            # Try to reopen the capture
+            try:
+                self.capture_manager.reopen()
+                self.cap = self.capture_manager.cap
+                if not self.cap or not self.cap.isOpened():
+                    self.health_monitor.update_on_failure()
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to reopen capture in get_frame: {e}")
+                self.health_monitor.update_on_failure()
+                return None
             
         try:
-            # Check if we need to skip frames to catch up
-            current_time = time.time()
-            time_since_last = current_time - self.last_processed_time
-            frames_to_skip = int(time_since_last * self.frame_rate) - 1
-            
-            # Skip frames if we're falling behind (but not for video files)
-            if frames_to_skip > 0 and not self.is_file:
-                for _ in range(min(frames_to_skip, 5)):  # Limit max skipped frames
-                    self.cap.grab()  # Just grab frame, don't decode
-                logger.debug(f"Skipped {min(frames_to_skip, 5)} frames to catch up")
+            # For direct frame reading, don't skip frames to avoid timing issues
+            # Only skip frames if we have a recent timestamp
+            if self.last_processed_time > 0:
+                time_since_last = current_time - self.last_processed_time
+                frames_to_skip = int(time_since_last * self.frame_rate) - 1
+                
+                # Skip frames if we're falling behind (but not for video files)
+                if frames_to_skip > 0 and not self.is_file:
+                    for _ in range(min(frames_to_skip, 3)):  # Reduced max skipped frames
+                        self.cap.grab()  # Just grab frame, don't decode
+                    logger.debug(f"Skipped {min(frames_to_skip, 3)} frames to catch up")
             
             # Read frame with timeout protection
             success, frame = self.cap.read()
@@ -137,7 +174,26 @@ class VideoService:
             if not success or frame is None or frame.size == 0:
                 logger.warning("Failed to read frame from video source in get_frame")
                 self.health_monitor.update_on_failure()
-                return None
+                
+                # For RTSP streams, try a quick reconnect
+                if self.is_rtsp:
+                    try:
+                        logger.info("Attempting quick RTSP reconnect...")
+                        self.capture_manager.reopen()
+                        self.cap = self.capture_manager.cap
+                        if self.cap and self.cap.isOpened():
+                            success, frame = self.cap.read()
+                            if success and frame is not None and frame.size > 0:
+                                logger.info("Quick RTSP reconnect successful")
+                            else:
+                                return None
+                        else:
+                            return None
+                    except Exception as e:
+                        logger.error(f"Quick RTSP reconnect failed: {e}")
+                        return None
+                else:
+                    return None
             
             # Update health monitoring on successful frame read
             self.health_monitor.update_on_success()
@@ -156,6 +212,7 @@ class VideoService:
                 frame = cv2.resize(frame, self.resolution)
                 
             self.last_processed_time = current_time
+            self.current_frame = frame  # Update the cached frame
             return frame
             
         except Exception as e:
@@ -278,64 +335,164 @@ class VideoService:
         """
         last_error_time = 0
         error_message_cooldown = 5.0  # seconds
+        consecutive_frame_failures = 0
+        max_consecutive_failures = 10
+        demo_fallback_attempted = False
         
-        while True:
+        logger.info("Starting raw frame generation for camera preview")
+        
+        while True:  # Infinite loop for continuous streaming
             try:
-                # Limit frame rate to target FPS
+                # Limit frame rate to target FPS (but be more generous for previews)
                 current_time = time.time()
+                
+                # For camera preview, use a more conservative frame rate
+                preview_fps = min(self.frame_rate, 15)  # Max 15 FPS for preview
                 time_elapsed = current_time - self.last_processed_time
                 
-                if time_elapsed < (1.0 / self.frame_rate):
-                    time.sleep((1.0 / self.frame_rate) - time_elapsed)
+                if time_elapsed < (1.0 / preview_fps):
+                    time.sleep(max(0.1, (1.0 / preview_fps) - time_elapsed))
                 
-                self.last_processed_time = time.time()
-                
-                # Check connection health
-                health_info = self.check_connection_health()
-                if not health_info["healthy"]:
-                    # If connection is unhealthy, wait briefly and try to recover
-                    if current_time - last_error_time > error_message_cooldown:
-                        logger.warning("Connection unhealthy during streaming, attempting to recover...")
-                        last_error_time = current_time
+                # Check if we should attempt fallback to webcam
+                if (consecutive_frame_failures > max_consecutive_failures and 
+                    not demo_fallback_attempted and 
+                    self.is_camera):
                     
-                    # Try to reconnect if needed
-                    if self.health_monitor.should_reconnect():
-                        self.capture_manager.reopen()
+                    logger.warning("Camera appears to be unavailable, attempting fallback to webcam...")
+                    try:
+                        # Switch to webcam as fallback
+                        fallback_source = 0  # Default webcam
+                        logger.info(f"Switching to webcam fallback: {fallback_source}")
+                        
+                        # Update video service to use webcam
+                        self.video_path = fallback_source
+                        self.capture_manager.release()
+                        time.sleep(1.0)
+                        
+                        # Create new capture manager with webcam
+                        self.capture_manager = VideoCaptureManager(
+                            fallback_source, self.frame_rate, self.resolution
+                        )
                         self.cap = self.capture_manager.cap
-                        time.sleep(0.5)
+                        
+                        # Update source type flags
+                        self.is_file = self.capture_manager.is_file
+                        self.is_rtsp = self.capture_manager.is_rtsp
+                        self.is_camera = self.capture_manager.is_camera
+                        
+                        # Reset counters
+                        consecutive_frame_failures = 0
+                        self.health_monitor.consecutive_failures = 0
+                        demo_fallback_attempted = True
+                        
+                        logger.info("Successfully switched to webcam fallback")
+                    except Exception as fallback_error:
+                        logger.error(f"Failed to switch to webcam fallback: {fallback_error}")
+                
+                # Check connection health less frequently for raw frames and only for live sources
+                if not self.is_file:  # Skip health checks for video files
+                    try:
+                        health_info = self.check_connection_health()
+                        if not health_info["healthy"]:
+                            # If connection is unhealthy, wait briefly and try to recover
+                            if current_time - last_error_time > error_message_cooldown:
+                                logger.warning("Connection unhealthy during raw streaming, attempting to recover...")
+                                last_error_time = current_time
+                            
+                            # Try to reconnect if needed (but only for cameras/RTSP, not files)
+                            if self.health_monitor.should_reconnect():
+                                logger.info("Attempting to reopen capture for raw frames...")
+                                self.capture_manager.reopen()
+                                self.cap = self.capture_manager.cap
+                                time.sleep(0.5)
+                    except Exception as health_error:
+                        logger.warning(f"Health check failed: {health_error}")
                 
                 # Get raw frame without detection processing
                 frame = self.get_frame()
                 
                 if frame is not None:
-                    # Reset health monitoring on successful frame
+                    # Reset health monitoring and failure counters on successful frame
                     self.health_monitor.update_on_success()
+                    consecutive_frame_failures = 0
                     
                     # Convert to JPEG without detection processing
-                    ret, buffer = cv2.imencode('.jpg', frame)
+                    ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     if ret:
                         # Yield the frame for streaming
                         yield (b'--frame\r\n'
                                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    else:
+                        logger.warning("Failed to encode frame as JPEG")
+                        consecutive_frame_failures += 1
                 else:
-                    # If frame capture failed, wait briefly before trying again
-                    time.sleep(0.1)
+                    # If frame capture failed, increment failure counter
+                    consecutive_frame_failures += 1
                     
-                    # After multiple failures, yield an error frame
-                    if self.health_monitor.consecutive_failures > 3:
-                        # Create a black frame with error message
-                        error_frame = self.frame_processor.create_error_frame(self.health_monitor.consecutive_failures)
-                        ret, buffer = cv2.imencode('.jpg', error_frame)
-                        if ret:
+                    # Wait briefly before trying again
+                    time.sleep(0.2)
+                    
+                    # After multiple failures, yield an error frame or test pattern
+                    if consecutive_frame_failures > 5:
+                        try:
+                            if hasattr(self.frame_processor, 'create_error_frame'):
+                                # Create a more informative error frame for raw preview
+                                if demo_fallback_attempted:
+                                    message = f"Demo Video Issue (Failures: {consecutive_frame_failures})"
+                                else:
+                                    message = f"Camera Unavailable (Failures: {consecutive_frame_failures})"
+                                
+                                error_frame = self.frame_processor.create_error_frame(
+                                    consecutive_frame_failures, 
+                                    message=message
+                                )
+                            else:
+                                # Create a simple error frame if method doesn't exist
+                                error_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
+                                
+                                if demo_fallback_attempted:
+                                    cv2.putText(error_frame, "Demo Video Issue", 
+                                              (10, self.resolution[1]//2), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                else:
+                                    cv2.putText(error_frame, "Camera Unavailable", 
+                                              (10, self.resolution[1]//2), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                    cv2.putText(error_frame, "Check camera connection", 
+                                              (10, self.resolution[1]//2 + 40), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                                
+                                cv2.putText(error_frame, f"Failures: {consecutive_frame_failures}", 
+                                          (10, self.resolution[1]//2 + 80), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                            
+                            ret, buffer = cv2.imencode('.jpg', error_frame)
+                            if ret:
+                                yield (b'--frame\r\n'
+                                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                        except Exception as error_frame_ex:
+                            logger.error(f"Failed to create error frame: {error_frame_ex}")
+                            # Yield a minimal error response
+                            error_msg = b"Camera unavailable"
                             yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                                   b'Content-Type: text/plain\r\n\r\n' + error_msg + b'\r\n')
             
             except Exception as e:
+                current_time = time.time()
                 if current_time - last_error_time > error_message_cooldown:
                     logger.exception(f"Error in generate_raw_frames: {e}")
                     last_error_time = current_time
+                consecutive_frame_failures += 1
                 time.sleep(0.5)
-    
+                
+                # Yield an error frame even in case of exceptions
+                try:
+                    error_msg = f"Error: {str(e)[:50]}".encode()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: text/plain\r\n\r\n' + error_msg + b'\r\n')
+                except:
+                    pass  # If even error yielding fails, continue loop
+
     def start_capture_thread(self):
         """Start background thread for continuous frame capture.
         
@@ -345,6 +502,12 @@ class VideoService:
         if self.is_running:
             logger.warning("Video capture thread is already running")
             return False
+            
+        # Make sure any existing thread is properly stopped first
+        if self.thread and self.thread.is_alive():
+            logger.warning("Existing thread detected, stopping it first...")
+            self.stop_capture_thread()
+            time.sleep(0.5)  # Brief pause to ensure thread stops
             
         self.is_running = True
         self.thread = threading.Thread(target=self._capture_frames)
@@ -419,34 +582,38 @@ class VideoService:
                     
                     last_rtsp_health_check = frame_start_time
                 
-                # Check if we need to reconnect due to health issues
+                # Check if we need to reconnect due to health issues (skip for files unless really broken)
                 if self.health_monitor.should_reconnect():
-                    logger.warning(f"Connection appears unhealthy. Reconnecting... (attempt {self.health_monitor.consecutive_failures})")
-                    self.capture_manager.reopen()
-                    self.cap = self.capture_manager.cap
-                    time.sleep(reconnect_backoff)
-                    # Increase backoff time for next reconnection attempt (exponential backoff)
-                    reconnect_backoff = min(reconnect_backoff * 1.5, max_backoff)
-                    
-                    # Stop trying after max attempts for non-RTSP sources
-                    if not self.is_rtsp and self.health_monitor.exceeded_max_attempts():
-                        logger.error(f"Failed to reconnect after {self.health_monitor.max_reconnect_attempts} attempts")
-                        # If we have a demo video file configured, switch to it as fallback
-                        demo_path = os.path.join(current_app.static_folder, 'videos', 'demo.mp4')
-                        if os.path.exists(demo_path) and self.video_path != demo_path:
-                            logger.info(f"Switching to demo video: {demo_path}")
-                            self.video_path = demo_path
-                            self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
-                            self.cap = self.capture_manager.cap
-                            self.is_file = self.capture_manager.is_file
-                            self.is_rtsp = self.capture_manager.is_rtsp
-                            self.is_camera = self.capture_manager.is_camera
-                            self.health_monitor.consecutive_failures = 0
-                        else:
-                            # Reset consecutive failures but keep trying
-                            self.health_monitor.consecutive_failures = 0
-                            time.sleep(3.0)  # Longer wait before retry cycle
-                    continue
+                    # For video files, be much more conservative about reconnections
+                    if self.is_file and self.health_monitor.consecutive_failures < 10:
+                        # For files, only reconnect if we have many consecutive failures
+                        pass  # Skip reconnection for files with few failures
+                    else:
+                        logger.warning(f"Connection appears unhealthy. Reconnecting... (attempt {self.health_monitor.consecutive_failures})")
+                        self.capture_manager.reopen()
+                        self.cap = self.capture_manager.cap
+                        time.sleep(reconnect_backoff)
+                        # Increase backoff time for next reconnection attempt (exponential backoff)
+                        reconnect_backoff = min(reconnect_backoff * 1.5, max_backoff)
+                        
+                        # Stop trying after max attempts for non-RTSP sources
+                        if not self.is_rtsp and self.health_monitor.exceeded_max_attempts():
+                            logger.error(f"Failed to reconnect after {self.health_monitor.max_reconnect_attempts} attempts")
+                            # If source is not webcam, switch to webcam as fallback
+                            if self.video_path != 0:
+                                logger.info("Switching to webcam fallback")
+                                self.video_path = 0
+                                self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
+                                self.cap = self.capture_manager.cap
+                                self.is_file = self.capture_manager.is_file
+                                self.is_rtsp = self.capture_manager.is_rtsp
+                                self.is_camera = self.capture_manager.is_camera
+                                self.health_monitor.consecutive_failures = 0
+                            else:
+                                # Reset consecutive failures but keep trying
+                                self.health_monitor.consecutive_failures = 0
+                                time.sleep(3.0)  # Longer wait before retry cycle
+                        continue
                 
                 # Read a frame
                 if not self.cap or not self.cap.isOpened():
@@ -532,6 +699,16 @@ class VideoService:
                     if ret:
                         frame_encoded = base64.b64encode(buffer).decode('utf-8')
                         self.socketio.emit('video_frame', frame_encoded)
+                        # Log every 30 frames to avoid spam
+                        if hasattr(self, '_frame_emit_counter'):
+                            self._frame_emit_counter += 1
+                        else:
+                            self._frame_emit_counter = 1
+                        
+                        if self._frame_emit_counter % 30 == 0:
+                            logger.info(f"Emitted video frame #{self._frame_emit_counter} via WebSocket (frame size: {len(frame_encoded)} chars)")
+                    else:
+                        logger.warning("Failed to encode frame for WebSocket emission")
                 
                 # Update FPS from frame processor
                 self.fps = self.frame_processor.fps
@@ -580,7 +757,79 @@ class VideoService:
         source_info["actual_fps"] = self.fps
         
         return source_info
+    
+    def get_source_status(self):
+        """Get detailed information about the video source status.
         
+        Returns:
+            dict: Status information including original source, current source, and fallback status
+        """
+        return {
+            'original_source': self.original_video_path,
+            'current_source': self.video_path,
+            'is_fallback_active': self.is_fallback_active,
+            'fallback_reason': self.fallback_reason,
+            'is_camera': self.is_camera,
+            'is_rtsp': self.is_rtsp,
+            'is_file': self.is_file,
+            'capture_opened': self.cap and self.cap.isOpened() if self.cap else False,
+            'health_status': self.health_monitor.check_health(
+                is_camera=self.is_camera,
+                is_rtsp=self.is_rtsp,
+                is_file=self.is_file
+            ) if self.health_monitor else None
+        }
+    
+    def activate_fallback(self, reason, fallback_path=None):
+        """Activate fallback mode with proper status tracking.
+        
+        Args:
+            reason: Reason for fallback activation
+            fallback_path: Fallback source (auto-determined if None)
+        """
+        if not self.is_fallback_active:
+            logger.warning(f"Activating fallback mode: {reason}")
+            self.is_fallback_active = True
+            self.fallback_reason = reason
+            
+            # Determine appropriate fallback source
+            if fallback_path is None:
+                if self.is_camera and self.video_path == 0:
+                    # If current source is default camera, try demo video
+                    fallback_path = 'app/static/videos/demo.mp4'
+                    if not os.path.exists(fallback_path):
+                        # If demo video doesn't exist, try camera 1
+                        fallback_path = 1
+                elif self.is_camera:
+                    # If current source is another camera, try default camera
+                    fallback_path = 0
+                else:
+                    # If current source is file/rtsp, try default camera
+                    fallback_path = 0
+            
+            # Switch to fallback source
+            old_path = self.video_path
+            self.video_path = fallback_path
+            
+            # Update capture manager
+            try:
+                self.capture_manager.release()
+                time.sleep(0.5)
+                self.capture_manager = VideoCaptureManager(fallback_path, self.frame_rate, self.resolution)
+                self.cap = self.capture_manager.cap
+                self.is_file = self.capture_manager.is_file
+                self.is_rtsp = self.capture_manager.is_rtsp
+                self.is_camera = self.capture_manager.is_camera
+                
+                logger.info(f"Fallback activated: {old_path} -> {fallback_path}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to activate fallback: {e}")
+                self.is_fallback_active = False
+                self.fallback_reason = None
+                return False
+        return False
+    
     def release(self):
         """Release resources when service is no longer needed."""
         self.stop_capture_thread()

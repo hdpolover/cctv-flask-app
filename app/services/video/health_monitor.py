@@ -38,20 +38,37 @@ class HealthMonitor:
             
         Returns:
             Dict with health status information
-        """        # Consider connection unhealthy if no successful read in appropriate timeframe
-        if is_rtsp:
-            timeout_threshold = 30.0  # RTSP streams get 30 seconds
-        elif is_camera:
-            timeout_threshold = 10.0  # Cameras get 10 seconds
-        else:  # is_file
-            timeout_threshold = 5.0   # Files get 5 seconds
+        """
+        # Calculate time since last successful read
+        current_time = time.time()
+        time_since_last_read = current_time - self.last_successful_read if self.last_successful_read > 0 else 0
         
-        connection_timeout = time_since_last_read > timeout_threshold and self.last_successful_read > 0
+        # For video files, be much more lenient - they can have long gaps between frames
+        # or pauses, and don't need health monitoring like live streams
+        if is_file:
+            # For files, only consider unhealthy if we have multiple consecutive failures
+            # Don't use timeout-based health checks for files
+            connection_healthy = self.consecutive_failures < 3
+        else:
+            # Consider connection unhealthy if no successful read in appropriate timeframe
+            if is_rtsp:
+                timeout_threshold = 30.0  # RTSP streams get 30 seconds
+            elif is_camera:
+                timeout_threshold = 10.0  # Cameras get 10 seconds
+            else:
+                timeout_threshold = 5.0   # Default fallback
+            
+            connection_timeout = time_since_last_read > timeout_threshold and self.last_successful_read > 0
+            connection_healthy = not connection_timeout and self.consecutive_failures < 5
         
-        # Update health status
-        if connection_timeout and self.connection_healthy:
-            self.connection_healthy = False
-            logger.warning(f"Video connection timeout: {time_since_last_read:.1f}s since last successful read")
+        # Only update health status if it's actually changing and not for files
+        if not is_file and connection_healthy != self.connection_healthy:
+            self.connection_healthy = connection_healthy
+            if not connection_healthy:
+                logger.warning(f"Video connection timeout: {time_since_last_read:.1f}s since last successful read")
+        elif is_file:
+            # For files, set health based on failure count only
+            self.connection_healthy = connection_healthy
         
         # Get source type
         source_type = "unknown"
@@ -76,7 +93,9 @@ class HealthMonitor:
         Returns:
             bool: True if reconnection should be attempted
         """
-        return not self.connection_healthy and self.consecutive_failures > 0
+        # Only reconnect if we have failures and connection is actually unhealthy
+        # Be more conservative about reconnecting
+        return not self.connection_healthy and self.consecutive_failures >= 3
         
     def exceeded_max_attempts(self):
         """Check if maximum reconnection attempts have been exceeded.

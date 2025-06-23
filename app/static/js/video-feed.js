@@ -1,15 +1,21 @@
 class VideoFeed {
     constructor(options = {}) {
+        console.log('[VideoFeed] Initializing with options:', options);
         this.socketUrl = options.socketUrl || window.location.origin;
         this.socket = io(this.socketUrl);
+        console.log('[VideoFeed] Socket created for URL:', this.socketUrl);
         this.counterElement = document.getElementById('people-count');
         this.isConnected = false;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 1000;
         this.lastUpdateTime = Date.now();
+        this.videoStatusInterval = null;
+        this.wasFallbackMode = false;
+        this.frameCounter = 0;
         this.setupSocketHandlers();
         this.initializeUI();
+        this.startVideoStatusMonitoring();
     }
 
     initializeUI() {
@@ -34,7 +40,7 @@ class VideoFeed {
 
     setupSocketHandlers() {
         this.socket.on('connect', () => {
-            console.log('Connected to server');
+            console.log('Connected to server - WebSocket connection established');
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.updateConnectionStatus('connected', 'Terhubung - Update Real-time Aktif');
@@ -56,11 +62,25 @@ class VideoFeed {
         // Handle video frame updates with error handling
         this.socket.on('video_frame', (frameData) => {
             try {
+                console.log('Received video frame data, length:', frameData ? frameData.length : 'null');
                 const videoFeed = document.getElementById('video-feed');
                 if (videoFeed && frameData) {
                     videoFeed.src = `data:image/jpeg;base64,${frameData}`;
                     this.lastUpdateTime = Date.now();
                     this.removeVideoError();
+                    console.log('Video frame updated successfully');
+                    
+                    // Update frame counter for debugging
+                    if (!this.frameCounter) this.frameCounter = 0;
+                    this.frameCounter++;
+                    
+                    // Update a debug counter on page if element exists
+                    const debugCounter = document.getElementById('debug-frame-counter');
+                    if (debugCounter) {
+                        debugCounter.textContent = `Frames received: ${this.frameCounter}`;
+                    }
+                } else {
+                    console.warn('Video feed element not found or no frame data');
                 }
             } catch (error) {
                 console.error('Error updating video frame:', error);
@@ -194,51 +214,17 @@ class VideoFeed {
     }
 
     updateConnectionStatus(status, message) {
-        const statusIndicator = this.createConnectionStatusElement();
+        const statusIndicator = document.getElementById('connection-status');
+        if (!statusIndicator) return;
 
-        statusIndicator.innerHTML = `
-            <span class="status-indicator status-${status}"></span>
-            <span class="status-text">${message}</span>
-            <span class="status-timestamp">${new Date().toLocaleTimeString()}</span>
-        `;
-
-        statusIndicator.className = `connection-status ${status}`;
-    } updateSystemStatus(status) {
+        // Update just the text content for the existing template element
+        statusIndicator.textContent = message;
+        statusIndicator.className = `detail-value status-${status}`;
+    }    updateSystemStatus(status) {
         const systemStatusElement = document.getElementById('system-status');
 
-        // Handle fallback video notifications
-        if (status.status === 'fallback') {
-            this.showNotification('Menggunakan video cadangan karena masalah koneksi kamera', 'warning');
-            // Add a visible indicator to the video container
-            const videoContainer = document.querySelector('.video-container');
-            if (videoContainer) {
-                const fallbackIndicator = document.createElement('div');
-                fallbackIndicator.className = 'fallback-indicator';
-                fallbackIndicator.textContent = '⚠️ Menggunakan Video Cadangan';
-
-                // Remove existing indicator if any
-                const existingIndicator = videoContainer.querySelector('.fallback-indicator');
-                if (existingIndicator) {
-                    existingIndicator.remove();
-                }
-
-                videoContainer.appendChild(fallbackIndicator);
-            }
-            return;
-        }
-
-        // Handle reconnection notification
-        if (status.status === 'reconnected') {
-            this.showNotification('Berhasil terhubung kembali ke sumber video asli', 'success');
-            // Remove fallback indicator if exists
-            const fallbackIndicator = document.querySelector('.fallback-indicator');
-            if (fallbackIndicator) {
-                fallbackIndicator.remove();
-            }
-            return;
-        }
-
-        // Handle regular system status updates
+        // Let the video status monitoring handle fallback states
+        // This method now focuses on system performance metrics
         if (systemStatusElement && status.cpu_usage !== undefined && status.memory_usage !== undefined) {
             systemStatusElement.innerHTML = `
                 <span class="status-label">Sistem:</span>
@@ -446,9 +432,126 @@ class VideoFeed {
         }, 30000); // Check less frequently - every 30 seconds
     }
 
+    startVideoStatusMonitoring() {
+        this.videoStatusInterval = setInterval(() => {
+            this.checkVideoStatus();
+        }, 5000); // Check every 5 seconds
+    }
+
+    checkVideoStatus() {
+        fetch('/api/video-status')
+            .then(response => response.json())
+            .then(data => {
+                this.handleVideoStatusUpdate(data);
+            })
+            .catch(error => {
+                console.error('Error checking video status:', error);
+            });
+    }
+
+    handleVideoStatusUpdate(status) {
+        const videoContainer = document.querySelector('.video-container');
+        const statsContainer = document.querySelector('.stats-container') || 
+                              document.querySelector('.counter-section');
+        
+        // Remove existing status indicators
+        this.removeFallbackIndicators();
+        
+        if (status.is_fallback_active) {
+            // Show fallback warning
+            this.showFallbackWarning(status.fallback_reason, status.original_video_path);
+            
+            // Hide or disable detection stats
+            if (statsContainer) {
+                this.disableDetectionStats(statsContainer);
+            }
+            
+            // Update connection status
+            this.updateConnectionStatus('fallback', 
+                `Demo mode aktif - ${status.fallback_reason || 'Kamera tidak tersedia'}`);
+                
+        } else {
+            // Normal operation - ensure stats are enabled
+            if (statsContainer) {
+                this.enableDetectionStats(statsContainer);
+            }
+            
+            // Update connection status to show normal operation
+            this.updateConnectionStatus('connected', 'Terhubung - Deteksi aktif');
+            
+            // Update connection status if we were in fallback
+            if (this.wasFallbackMode) {
+                this.showNotification('Berhasil terhubung ke sumber video', 'success');
+            }
+        }
+        
+        this.wasFallbackMode = status.is_fallback_active;
+    }
+
+    showFallbackWarning(reason, originalPath) {
+        const videoContainer = document.querySelector('.video-container');
+        if (!videoContainer) return;
+        
+        const fallbackIndicator = document.createElement('div');
+        fallbackIndicator.className = 'fallback-indicator';
+        fallbackIndicator.innerHTML = `
+            <div class="fallback-content">
+                <span class="fallback-icon">⚠️</span>
+                <span class="fallback-title">Mode Demo Aktif</span>
+                <span class="fallback-reason">${reason || 'Kamera tidak tersedia'}</span>
+                <small class="fallback-note">Deteksi otomatis dinonaktifkan</small>
+            </div>
+        `;
+        
+        videoContainer.appendChild(fallbackIndicator);
+        
+        // Show notification
+        this.showNotification(
+            `Mode demo aktif: ${reason || 'Kamera tidak tersedia'}. Deteksi dinonaktifkan.`, 
+            'warning'
+        );
+    }
+
+    removeFallbackIndicators() {
+        const indicators = document.querySelectorAll('.fallback-indicator');
+        indicators.forEach(indicator => indicator.remove());
+    }
+
+    disableDetectionStats(container) {
+        container.classList.add('stats-disabled');
+        
+        // Add overlay message
+        let overlay = container.querySelector('.stats-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'stats-overlay';
+            overlay.innerHTML = `
+                <div class="overlay-content">
+                    <span class="overlay-icon">📊</span>
+                    <span class="overlay-text">Statistik deteksi tidak tersedia dalam mode demo</span>
+                </div>
+            `;
+            container.appendChild(overlay);
+        }
+    }
+
+    enableDetectionStats(container) {
+        container.classList.remove('stats-disabled');
+        
+        // Remove overlay
+        const overlay = container.querySelector('.stats-overlay');
+        if (overlay) {
+            overlay.remove();
+        }
+    }
+
     disconnect() {
         if (this.socket) {
             this.socket.disconnect();
+        }
+
+        if (this.videoStatusInterval) {
+            clearInterval(this.videoStatusInterval);
         }
     }
 }

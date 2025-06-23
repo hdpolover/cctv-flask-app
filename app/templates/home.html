@@ -15,7 +15,10 @@
     
     <div class="video-details-container">
         <div class="video-container">
-            <img src="{{ url_for('main.video_feed') }}" id="video-feed" alt="Feed Video">
+            <img id="video-feed" alt="Feed Video">
+            <div id="debug-frame-counter" style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 3px; font-size: 12px; z-index: 1000;">
+                Frames received: 0
+            </div>
         </div>
         
         <div class="video-details-card">
@@ -53,16 +56,24 @@
                 <span class="detail-label">Status:</span>
                 <span class="detail-value" id="connection-status">Menunggu koneksi...</span>
             </div>
+            <div class="detail-item" id="video-status-container" style="display: none;">
+                <span class="detail-label">Status Video:</span>
+                <span class="detail-value" id="video-status">-</span>
+            </div>
+            <div class="detail-item" id="fallback-status-container" style="display: none;">
+                <span class="detail-label">Mode Fallback:</span>
+                <span class="detail-value warning-text" id="fallback-reason">-</span>
+            </div>
         </div>
     </div>
     
-    <div class="stats-grid">
-        <div class="counter">
+    <div class="stats-grid" id="stats-grid">
+        <div class="counter" id="counter-stats">
             <h3>Penghitung Orang</h3>
             <p id="people-count">{{ people_in_room }} Orang di ruangan</p>
         </div>
         
-        <div class="movement-counter">
+        <div class="movement-counter" id="movement-stats">
             <h3>Penghitung Pergerakan</h3>
             <p class="entries">Masuk <span>{{ entries }}</span></p>
             <p class="exits">Keluar <span>{{ exits }}</span></p>

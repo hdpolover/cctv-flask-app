@@ -1730,26 +1730,142 @@ a, button, input, select, textarea, .btn {
     color: var(--warning-color);
 }
 
-/* Additional animations */
-@keyframes slideIn {
+/* Fallback indicator styles */
+.fallback-indicator {
+    position: absolute;
+    top: var(--spacing-md);
+    left: var(--spacing-md);
+    right: var(--spacing-md);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(245, 158, 11, 0.85));
+    color: white;
+    padding: var(--spacing-md);
+    border-radius: var(--radius-lg);
+    z-index: 10;
+    backdrop-filter: blur(8px);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    animation: slideInFromTop 0.5s ease-out;
+}
+
+.fallback-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: var(--spacing-xs);
+}
+
+.fallback-icon {
+    font-size: 1.5rem;
+    margin-bottom: var(--spacing-xs);
+}
+
+.fallback-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: var(--spacing-xs);
+}
+
+.fallback-reason {
+    font-size: 0.875rem;
+    opacity: 0.9;
+    font-weight: 500;
+}
+
+.fallback-note {
+    font-size: 0.75rem;
+    opacity: 0.8;
+    margin-top: var(--spacing-xs);
+}
+
+/* Fallback connection status variant */
+.connection-status.fallback {
+    border-color: var(--warning-color);
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning-color);
+    font-weight: 600;
+}
+
+/* Stats disabled state */
+.stats-disabled {
+    position: relative;
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.stats-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(2px);
+}
+
+.overlay-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.overlay-icon {
+    font-size: 2rem;
+    opacity: 0.5;
+}
+
+.overlay-text {
+    font-size: 0.875rem;
+    font-weight: 500;
+    max-width: 200px;
+    line-height: 1.4;
+}
+
+/* Slide in animation for fallback indicator */
+@keyframes slideInFromTop {
     from {
-        transform: translateX(100%);
+        transform: translateY(-100%);
         opacity: 0;
     }
     to {
-        transform: translateX(0);
+        transform: translateY(0);
         opacity: 1;
     }
 }
 
-@keyframes spin {
-    0% { transform: translate(-50%, -50%) rotate(0deg); }
-    100% { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-@keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+/* Responsive fallback indicator */
+@media (max-width: 768px) {
+    .fallback-indicator {
+        top: var(--spacing-sm);
+        left: var(--spacing-sm);
+        right: var(--spacing-sm);
+        padding: var(--spacing-sm);
+    }
+    
+    .fallback-icon {
+        font-size: 1.25rem;
+    }
+    
+    .fallback-title {
+        font-size: 0.875rem;
+    }
+    
+    .fallback-reason {
+        font-size: 0.8rem;
+    }
+    
+    .fallback-note {
+        font-size: 0.7rem;
+    }
 }
 
 /* Responsive enhancements */

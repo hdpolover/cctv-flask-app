@@ -13,15 +13,17 @@ logger = logging.getLogger(__name__)
 class FrameProcessor:
     """Processor for video frames with detection and annotations."""
     
-    def __init__(self, detection_model, resolution=(640, 480), frame_rate=30):
+    def __init__(self, detection_model, video_service=None, resolution=(640, 480), frame_rate=30):
         """Initialize the frame processor.
         
         Args:
             detection_model: The object detection model
+            video_service: The video service instance to check fallback status
             resolution: Resolution as (width, height) tuple
             frame_rate: Target frame rate for processing
         """
         self.detection_model = detection_model
+        self.video_service = video_service
         self.resolution = resolution
         self.frame_rate = frame_rate
         
@@ -54,8 +56,28 @@ class FrameProcessor:
                 frame = UIUtils.add_timestamp(frame)
                 return frame  # Skip processing if we're ahead of schedule
             
-            # Detect people in the frame
-            people_boxes, movement = self.detection_model.detect_people(frame)
+            # Check if video service is in fallback mode - skip detection if so
+            skip_detection = False
+            fallback_message = ""
+            if self.video_service and hasattr(self.video_service, 'is_fallback_active'):
+                if self.video_service.is_fallback_active:
+                    skip_detection = True
+                    # Determine fallback mode display text
+                    if hasattr(self.video_service, 'is_file') and self.video_service.is_file:
+                        fallback_message = f"Demo Mode - {self.video_service.fallback_reason}"
+                    else:
+                        fallback_message = f"Backup Camera - {self.video_service.fallback_reason}"
+                    logger.debug("Skipping detection - video service in fallback mode")
+            
+            # Detect people in the frame (only if not in fallback mode)
+            people_boxes = []
+            movement = None
+            if not skip_detection:
+                people_boxes, movement = self.detection_model.detect_people(frame)
+            else:
+                # If in fallback mode, reset counters to avoid misleading data
+                if hasattr(self.detection_model, 'reset_counters'):
+                    self.detection_model.reset_counters()
             
             # Calculate FPS
             frame_end_time = time.time()
@@ -150,6 +172,10 @@ class FrameProcessor:
                 
             # Add timestamp to the frame
             frame = UIUtils.add_timestamp(frame)
+            
+            # Add fallback warning if in demo mode
+            if skip_detection and fallback_message:
+                frame = UIUtils.add_fallback_warning(frame, fallback_message)
                 
             return frame
             

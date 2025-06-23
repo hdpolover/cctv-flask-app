@@ -236,12 +236,22 @@ class DoorAreaConfig {
     }
     
     saveDoorArea(callback) {
+        // Prevent multiple simultaneous save operations
+        if (this._saving) {
+            console.log('Save operation already in progress, skipping...');
+            if (callback) callback(false, 'Save operation already in progress');
+            return;
+        }
+        
+        this._saving = true;
+        
         const x1 = parseInt(this.x1Input.value);
         const y1 = parseInt(this.y1Input.value);
         const x2 = parseInt(this.x2Input.value);
         const y2 = parseInt(this.y2Input.value);
 
         if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
+            this._saving = false;
             this.updateStatus('Silakan gambar area pintu terlebih dahulu', 'error');
             if (callback) callback(false, 'Silakan gambar area pintu terlebih dahulu');
             return;
@@ -261,6 +271,7 @@ class DoorAreaConfig {
         })
             .then(response => response.json())
             .then(result => {
+                this._saving = false;
                 if (result.success) {
                     this.updateStatus(result.message, 'success');
                     
@@ -286,6 +297,7 @@ class DoorAreaConfig {
                 }
             })
             .catch(error => {
+                this._saving = false;
                 this.updateStatus('Error: ' + error.message, 'error');
                 
                 // Use toast for error if available
@@ -305,18 +317,23 @@ class DoorAreaConfig {
     }
 }
 
-// Initialize door configuration when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-    if (document.getElementById('video-feed')) {
-        new DoorAreaConfig();
-    }
-});
-
-// Create a new doorConfig instance when script is loaded
+// Global instance variable to prevent multiple initializations
 let doorAreaInstance = null;
+
+// Initialize door configuration when the page loads (only once)
 document.addEventListener('DOMContentLoaded', function() {
-    // Create a global doorAreaConfig instance if the video feed exists
+    // Prevent multiple initializations
+    if (doorAreaInstance) {
+        console.log('DoorAreaConfig already initialized, skipping...');
+        return;
+    }
+    
+    // Only initialize if video feed exists and we haven't already initialized
     if (document.getElementById('video-feed')) {
+        console.log('Initializing DoorAreaConfig...');
         doorAreaInstance = new DoorAreaConfig();
+        
+        // Mark as initialized to prevent future duplicates
+        window.doorAreaConfigInitialized = true;
     }
 });
