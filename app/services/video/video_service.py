@@ -39,7 +39,7 @@ class VideoService:
         self.resolution = resolution        # Initialize subsystems
         self.capture_manager = VideoCaptureManager(video_path, frame_rate, resolution)
         self.health_monitor = HealthMonitor()
-        self.frame_processor = FrameProcessor(detection_model, resolution, frame_rate)
+        self.frame_processor = FrameProcessor(detection_model, self, resolution, frame_rate)
         
         # Initialize health monitor with first successful read
         if self.capture_manager.cap and self.capture_manager.cap.isOpened():
@@ -297,6 +297,16 @@ class VideoService:
                     # Reset health monitoring on successful frame
                     self.health_monitor.update_on_success()
                     
+                    # Emit counter updates periodically (every 1 second) when streaming
+                    if self.socketio:
+                        if hasattr(self, '_last_http_counter_emit_time'):
+                            if current_time - self._last_http_counter_emit_time >= 1.0:  # Every 1 second
+                                self._emit_counter_update()
+                                self._last_http_counter_emit_time = current_time
+                        else:
+                            self._last_http_counter_emit_time = current_time
+                            self._emit_counter_update()
+                    
                     # Yield the frame for streaming
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -337,11 +347,15 @@ class VideoService:
         error_message_cooldown = 5.0  # seconds
         consecutive_frame_failures = 0
         max_consecutive_failures = 10
+        total_attempts = 0
+        max_total_attempts = 200  # Reduced to prevent infinite loops, but still reasonable
         demo_fallback_attempted = False
         
         logger.info("Starting raw frame generation for camera preview")
         
-        while True:  # Infinite loop for continuous streaming
+        while total_attempts < max_total_attempts:
+            total_attempts += 1
+            
             try:
                 # Limit frame rate to target FPS (but be more generous for previews)
                 current_time = time.time()
@@ -353,41 +367,44 @@ class VideoService:
                 if time_elapsed < (1.0 / preview_fps):
                     time.sleep(max(0.1, (1.0 / preview_fps) - time_elapsed))
                 
-                # Check if we should attempt fallback to webcam
+                # Check if we should attempt fallback to demo video
                 if (consecutive_frame_failures > max_consecutive_failures and 
                     not demo_fallback_attempted and 
                     self.is_camera):
                     
-                    logger.warning("Camera appears to be unavailable, attempting fallback to webcam...")
+                    logger.warning("Camera appears to be unavailable, attempting fallback to demo video...")
                     try:
-                        # Switch to webcam as fallback
-                        fallback_source = 0  # Default webcam
-                        logger.info(f"Switching to webcam fallback: {fallback_source}")
-                        
-                        # Update video service to use webcam
-                        self.video_path = fallback_source
-                        self.capture_manager.release()
-                        time.sleep(1.0)
-                        
-                        # Create new capture manager with webcam
-                        self.capture_manager = VideoCaptureManager(
-                            fallback_source, self.frame_rate, self.resolution
-                        )
-                        self.cap = self.capture_manager.cap
-                        
-                        # Update source type flags
-                        self.is_file = self.capture_manager.is_file
-                        self.is_rtsp = self.capture_manager.is_rtsp
-                        self.is_camera = self.capture_manager.is_camera
-                        
-                        # Reset counters
-                        consecutive_frame_failures = 0
-                        self.health_monitor.consecutive_failures = 0
-                        demo_fallback_attempted = True
-                        
-                        logger.info("Successfully switched to webcam fallback")
+                        # Switch to demo video as fallback (use relative path)
+                        demo_path = 'app/static/videos/demo.mp4'
+                        if os.path.exists(demo_path):
+                            logger.info(f"Switching to demo video fallback: {demo_path}")
+                            
+                            # Update video service to use demo video
+                            self.video_path = demo_path
+                            self.capture_manager.release()
+                            time.sleep(1.0)
+                            
+                            # Create new capture manager with demo video
+                            self.capture_manager = VideoCaptureManager(
+                                demo_path, self.frame_rate, self.resolution
+                            )
+                            self.cap = self.capture_manager.cap
+                            
+                            # Update source type flags
+                            self.is_file = self.capture_manager.is_file
+                            self.is_rtsp = self.capture_manager.is_rtsp
+                            self.is_camera = self.capture_manager.is_camera
+                            
+                            # Reset counters
+                            consecutive_frame_failures = 0
+                            self.health_monitor.consecutive_failures = 0
+                            demo_fallback_attempted = True
+                            
+                            logger.info("Successfully switched to demo video fallback")
+                        else:
+                            logger.error(f"Demo video not found at: {demo_path}")
                     except Exception as fallback_error:
-                        logger.error(f"Failed to switch to webcam fallback: {fallback_error}")
+                        logger.error(f"Failed to switch to demo video fallback: {fallback_error}")
                 
                 # Check connection health less frequently for raw frames and only for live sources
                 if not self.is_file:  # Skip health checks for video files
@@ -492,7 +509,42 @@ class VideoService:
                            b'Content-Type: text/plain\r\n\r\n' + error_msg + b'\r\n')
                 except:
                     pass  # If even error yielding fails, continue loop
-
+        
+        # If we've reached max attempts, yield a final message and continue with demo fallback
+        if not self.is_fallback_active:
+            logger.warning("Maximum attempts reached in generate_raw_frames, attempting fallback")
+            
+            # Try to activate fallback
+            demo_path = 'app/static/videos/demo.mp4'
+            if os.path.exists(demo_path) and self.activate_fallback("Camera connection failed after maximum attempts", demo_path):
+                # Fallback activated successfully, try to generate a few frames from demo
+                logger.info("Fallback to demo video activated, generating frames...")
+                for _ in range(5):  # Generate a few frames from demo
+                    try:
+                        frame = self.get_frame()
+                        if frame is not None:
+                            ret, buffer = cv2.imencode('.jpg', frame)
+                            if ret:
+                                yield (b'--frame\r\n'
+                                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                                time.sleep(0.1)  # Brief pause between frames
+                        else:
+                            break
+                    except Exception as demo_error:
+                        logger.error(f"Error generating demo frames: {demo_error}")
+                        break
+            else:
+                logger.error("Failed to activate demo fallback or demo video not found")
+                
+        # Final error message
+        error_msg = "Camera unavailable - Please check camera settings and connection"
+        if self.is_fallback_active:
+            error_msg = f"Camera unavailable - Using demo video fallback (Reason: {self.fallback_reason})"
+            
+        final_msg = error_msg.encode()
+        yield (b'--frame\r\n'
+               b'Content-Type: text/plain\r\n\r\n' + final_msg + b'\r\n')
+    
     def start_capture_thread(self):
         """Start background thread for continuous frame capture.
         
@@ -599,10 +651,11 @@ class VideoService:
                         # Stop trying after max attempts for non-RTSP sources
                         if not self.is_rtsp and self.health_monitor.exceeded_max_attempts():
                             logger.error(f"Failed to reconnect after {self.health_monitor.max_reconnect_attempts} attempts")
-                            # If source is not webcam, switch to webcam as fallback
-                            if self.video_path != 0:
-                                logger.info("Switching to webcam fallback")
-                                self.video_path = 0
+                            # If we have a demo video file configured, switch to it as fallback
+                            demo_path = os.path.join(current_app.static_folder, 'videos', 'demo.mp4')
+                            if os.path.exists(demo_path) and self.video_path != demo_path:
+                                logger.info(f"Switching to demo video: {demo_path}")
+                                self.video_path = demo_path
                                 self.capture_manager = VideoCaptureManager(self.video_path, self.frame_rate, self.resolution)
                                 self.cap = self.capture_manager.cap
                                 self.is_file = self.capture_manager.is_file
@@ -699,16 +752,15 @@ class VideoService:
                     if ret:
                         frame_encoded = base64.b64encode(buffer).decode('utf-8')
                         self.socketio.emit('video_frame', frame_encoded)
-                        # Log every 30 frames to avoid spam
-                        if hasattr(self, '_frame_emit_counter'):
-                            self._frame_emit_counter += 1
-                        else:
-                            self._frame_emit_counter = 1
                         
-                        if self._frame_emit_counter % 30 == 0:
-                            logger.info(f"Emitted video frame #{self._frame_emit_counter} via WebSocket (frame size: {len(frame_encoded)} chars)")
-                    else:
-                        logger.warning("Failed to encode frame for WebSocket emission")
+                        # Emit counter updates every few frames to avoid overwhelming the UI
+                        if hasattr(self, '_last_counter_emit_time'):
+                            if frame_start_time - self._last_counter_emit_time >= 1.0:  # Every 1 second
+                                self._emit_counter_update()
+                                self._last_counter_emit_time = frame_start_time
+                        else:
+                            self._last_counter_emit_time = frame_start_time
+                            self._emit_counter_update()
                 
                 # Update FPS from frame processor
                 self.fps = self.frame_processor.fps
@@ -780,32 +832,17 @@ class VideoService:
             ) if self.health_monitor else None
         }
     
-    def activate_fallback(self, reason, fallback_path=None):
+    def activate_fallback(self, reason, fallback_path='app/static/videos/demo.mp4'):
         """Activate fallback mode with proper status tracking.
         
         Args:
             reason: Reason for fallback activation
-            fallback_path: Fallback source (auto-determined if None)
+            fallback_path: Path to fallback video
         """
         if not self.is_fallback_active:
             logger.warning(f"Activating fallback mode: {reason}")
             self.is_fallback_active = True
             self.fallback_reason = reason
-            
-            # Determine appropriate fallback source
-            if fallback_path is None:
-                if self.is_camera and self.video_path == 0:
-                    # If current source is default camera, try demo video
-                    fallback_path = 'app/static/videos/demo.mp4'
-                    if not os.path.exists(fallback_path):
-                        # If demo video doesn't exist, try camera 1
-                        fallback_path = 1
-                elif self.is_camera:
-                    # If current source is another camera, try default camera
-                    fallback_path = 0
-                else:
-                    # If current source is file/rtsp, try default camera
-                    fallback_path = 0
             
             # Switch to fallback source
             old_path = self.video_path
@@ -881,16 +918,93 @@ class VideoService:
                 # Emit the event with all data
                 self.socketio.emit('counter_update', data)
                 
+                # Add debug logging for counter updates
+                logger.debug(f"Emitted counter update: people_in_room={people_in_room}, entries={entries}, exits={exits}, fps={self.fps:.1f}")
+                
             except Exception as e:
                 logger.error(f"Error emitting counter update: {e}")
+                # Try to emit a basic update even if detailed data fails
+                try:
+                    self.socketio.emit('counter_update', {
+                        'people_in_room': 0,
+                        'entries': 0,
+                        'exits': 0,
+                        'fps': self.fps,
+                        'error': 'Detection error'
+                    })
+                except:
+                    pass  # If even basic emit fails, just continue
+    
+    def force_counter_update(self):
+        """Manually trigger a counter update emission."""
+        logger.info("Forcing counter update emission...")
+        self._emit_counter_update()
+    
+    def get_detection_status(self):
+        """Get current detection status and counts for debugging.
+        
+        Returns:
+            Dict with detection status information
+        """
+        try:
+            if not hasattr(self, 'frame_processor') or not self.frame_processor:
+                return {'status': 'error', 'message': 'Frame processor not initialized'}
                 
-    def _emit_system_status(self):
-        """Emit system status information."""
-        if self.socketio:
-            try:
-                health_data = self.health_monitor.get_status()
-                health_data['fps'] = self.fps  # Add current FPS to system status
+            if not hasattr(self.frame_processor, 'detection_model') or not self.frame_processor.detection_model:
+                return {'status': 'error', 'message': 'Detection model not initialized'}
                 
-                self.socketio.emit('system_status', health_data)
-            except Exception as e:
-                logger.error(f"Error emitting system status: {e}")
+            # Get current counts
+            entries, exits = self.frame_processor.detection_model.get_entry_exit_count()
+            people_in_room = max(0, entries - exits)
+            
+            # Check if door is defined
+            door_defined = getattr(self.frame_processor.detection_model, 'door_defined', False)
+            door_area = getattr(self.frame_processor.detection_model, 'door_area', None)
+            inside_direction = getattr(self.frame_processor.detection_model, 'inside_direction', 'right')
+            
+            # Get device info
+            device_info = str(getattr(self.frame_processor.detection_model, 'device', 'unknown'))
+            
+            return {
+                'status': 'ok',
+                'people_in_room': people_in_room,
+                'entries': entries,
+                'exits': exits,
+                'door_defined': door_defined,
+                'door_area': door_area,
+                'inside_direction': inside_direction,
+                'device': device_info,
+                'fps': self.fps,
+                'is_fallback_active': getattr(self, 'is_fallback_active', False),
+                'video_source': self.video_path
+            }
+        except Exception as e:
+            logger.error(f"Error getting detection status: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def test_detection_and_emit(self):
+        """Test detection functionality and emit results for debugging."""
+        logger.info("Testing detection and emission...")
+        
+        # Get current frame
+        frame = self.get_frame()
+        if frame is None:
+            logger.warning("No frame available for detection test")
+            return False
+            
+        # Process frame
+        processed_frame = self.process_frame(frame)
+        if processed_frame is None:
+            logger.warning("Frame processing failed")
+            return False
+            
+        # Force emit counter update
+        self.force_counter_update()
+        
+        # Log detection status
+        status = self.get_detection_status()
+        logger.info(f"Detection test complete. Status: {status}")
+        
+        return True
+
+    # ...existing code...

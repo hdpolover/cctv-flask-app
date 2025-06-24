@@ -795,8 +795,36 @@
         }
     }
 
+    // Check camera preview service status
+    function checkCameraPreviewStatus() {
+        fetch('/camera_preview_status')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Camera preview status:', data);
+                
+                if (data.error) {
+                    console.warn('Camera preview service error:', data.error);
+                    updateCameraStatus('error', 'Service Error');
+                } else {
+                    // Update status based on camera preview service health
+                    if (data.is_opened && data.consecutive_failures === 0) {
+                        updateCameraStatus('healthy', 'Preview Active');
+                    } else if (data.consecutive_failures > 0 && data.consecutive_failures < 3) {
+                        updateCameraStatus('warning', 'Preview Issues');
+                    } else {
+                        updateCameraStatus('error', 'Preview Unavailable');
+                    }
+                }
+            })
+            .catch(error => {
+                console.warn('Failed to check camera preview status:', error);
+                // Don't update status on fetch error to avoid false alarms
+            });
+    }
+
     // Start checking video feed status after page load (prevent duplicate)
     let statusCheckTimer = null;
+    let previewStatusTimer = null;
     setTimeout(() => {
         // Only initialize if not already done
         if (!statusCheckInitialized) {
@@ -804,9 +832,12 @@
             updateCameraStatus('connecting', 'Initializing...');
             
             checkVideoFeedStatus();
+            checkCameraPreviewStatus(); // Check camera preview service status
+            
             // Check periodically (only if not already monitoring)
             if (!videoStatusInterval) {
                 statusCheckTimer = setInterval(checkVideoFeedStatus, 10000); // Check every 10 seconds
+                previewStatusTimer = setInterval(checkCameraPreviewStatus, 15000); // Check preview service every 15 seconds
             }
         }
     }, 2000);
@@ -820,6 +851,10 @@
         if (statusCheckTimer) {
             clearInterval(statusCheckTimer);
             statusCheckTimer = null;
+        }
+        if (previewStatusTimer) {
+            clearInterval(previewStatusTimer);
+            previewStatusTimer = null;
         }
         console.log('Cleaned up video monitoring intervals');
     });
@@ -1413,4 +1448,5 @@
         openModal('door-success-modal');
     }
 </script>
+
 {% endblock %}

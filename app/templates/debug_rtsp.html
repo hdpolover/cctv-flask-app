@@ -176,11 +176,11 @@
                 </tr>
                 <tr>
                     <td>Last Success</td>
-                    <td>{{ diagnostics.health_info.last_success_time or 'Never' }}</td>
+                    <td>{{ diagnostics.health_info.last_successful_read or 'Never' }}</td>
                 </tr>
                 <tr>
-                    <td>Success Rate</td>
-                    <td>{{ '%.1f%%' % (diagnostics.health_info.success_rate * 100) }}</td>
+                    <td>Time Since Last Read</td>
+                    <td>{{ '%.1f seconds' % diagnostics.health_info.time_since_last_read if diagnostics.health_info.last_successful_read else 'N/A' }}</td>
                 </tr>
             </table>
         </div>

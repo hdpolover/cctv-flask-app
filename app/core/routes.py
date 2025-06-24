@@ -10,6 +10,7 @@ import numpy as np
 import time
 
 from app.services.video_service import VideoService
+from app.services.video.camera_preview_service import CameraPreviewService
 from app.models.detection_model import DetectionModel
 from app.core.firebase_client import fetch_camera_settings, save_camera_settings
 from app import socketio
@@ -23,6 +24,7 @@ main_bp = Blueprint('main', __name__)
 # Shared resources
 detection_model = None
 video_service = None
+camera_preview_service = None
 _initialization_lock = threading.Lock()
 _initialized = False
 
@@ -58,8 +60,7 @@ def initialize_services():
             # Get camera settings
             video_source = settings.get('video_source', 'camera')
             if video_source == 'demo':
-                # Use webcam as default instead of demo video
-                video_path = current_app.config['VIDEO_PATH']  # This is 0 (webcam)
+                video_path = 'app/static/videos/demo.mp4'
             else:
                 video_path = settings.get('camera_url', current_app.config['VIDEO_PATH'])
                 
@@ -81,6 +82,13 @@ def initialize_services():
             video_service.start_capture_thread()
             logger.info("Video service initialized and started")
             
+            # Force an initial counter update to test the connection
+            try:
+                video_service.force_counter_update()
+                logger.info("Initial counter update forced")
+            except Exception as e:
+                logger.error(f"Error forcing initial counter update: {e}")
+            
             # Set door area if configured
             if settings and 'door_area' in settings:
                 door_area = settings['door_area']
@@ -100,6 +108,23 @@ def initialize_services():
         # Mark as initialized
         _initialized = True
         logger.info("Service initialization completed successfully")
+
+def initialize_camera_preview(video_path=0, frame_rate=15, resolution=(640, 480)):
+    """Initialize camera preview service for camera settings page."""
+    global camera_preview_service
+    
+    try:
+        # Release existing preview service if any
+        if camera_preview_service:
+            camera_preview_service.release()
+        
+        # Create new preview service
+        camera_preview_service = CameraPreviewService(video_path, frame_rate, resolution)
+        logger.info(f"Camera preview service initialized: {video_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize camera preview service: {e}")
+        return False
 
 # Register initialization function to run before first request
 @main_bp.before_app_request
@@ -131,9 +156,6 @@ def login():
 def home():
     """Home page with video feed."""
     global detection_model, video_service
-    
-    # Initialize services if not already done
-    initialize_services()
     
     # Get current counts
     entries = 0
@@ -205,12 +227,55 @@ def video_feed():
 @main_bp.route('/raw_video_feed')
 def raw_video_feed():
     """Raw video streaming route without detection for camera settings."""
-    global video_service
+    global camera_preview_service
     
-    # Initialize services if not already done
-    initialize_services()
+    # Get current camera settings for preview
+    try:
+        settings = fetch_camera_settings()
+        video_source = settings.get('video_source', 'camera')
         
-    return Response(video_service.generate_raw_frames(),
+        if video_source == 'demo':
+            video_path = 'app/static/videos/demo.mp4'
+        else:
+            video_path = settings.get('camera_url', 0)
+            
+        frame_rate = int(settings.get('frame_rate', 15))  # Lower FPS for preview
+        resolution_str = settings.get('resolution', '640,480')
+        
+        # Parse resolution
+        if ',' in resolution_str:
+            width, height = map(int, resolution_str.split(','))
+            resolution = (width, height)
+        else:
+            resolution = (640, 480)
+            
+    except Exception as e:
+        logger.error(f"Error getting camera settings for preview: {e}")
+        video_path = 0
+        frame_rate = 15
+        resolution = (640, 480)
+    
+    # Initialize or update camera preview service
+    if camera_preview_service is None:
+        initialize_camera_preview(video_path, frame_rate, resolution)
+    else:
+        # Update settings if they changed
+        camera_preview_service.update_settings(video_path, frame_rate, resolution)
+    
+    if camera_preview_service is None:
+        # Fallback error response
+        def error_generator():
+            error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(error_frame, "Camera Preview Error", (50, 240), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            ret, buffer = cv2.imencode('.jpg', error_frame)
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        return Response(error_generator(),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    return Response(camera_preview_service.generate_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @main_bp.route('/dashboard')
@@ -222,10 +287,11 @@ def dashboard():
 @main_bp.route('/camera-settings', methods=['GET', 'POST'])
 def camera_settings():
     """Camera settings page."""
-    global video_service
+    global video_service, camera_preview_service
     
-    # Initialize services if not already done
-    initialize_services()
+    # Check if services are initialized
+    if video_service is None:
+        initialize_services()
     
     if request.method == 'POST':
         try:
@@ -253,9 +319,16 @@ def camera_settings():
             else:
                 resolution = current_app.config['RESOLUTION']
 
-            # Update video service
+            # Update main video service
             if video_service:
                 video_service.update_settings(video_path, frame_rate, resolution)
+            
+            # Update camera preview service (for camera settings page)
+            preview_frame_rate = min(frame_rate, 15)  # Lower FPS for preview
+            if camera_preview_service:
+                camera_preview_service.update_settings(video_path, preview_frame_rate, resolution)
+            else:
+                initialize_camera_preview(video_path, preview_frame_rate, resolution)
                 
             # Prepare settings to save
             save_data = {
@@ -530,10 +603,35 @@ def stream_health():
     
     return jsonify(health_info)
 
-@main_bp.route('/test-websocket')
-def test_websocket():
-    """Test page for WebSocket debugging."""
-    from flask import send_file
-    import os
-    test_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'test_websocket.html')
-    return send_file(test_file)
+@main_bp.route('/camera_preview_status')
+def camera_preview_status():
+    """Get camera preview service status."""
+    global camera_preview_service
+    
+    if camera_preview_service is None:
+        return jsonify({'error': 'Camera preview service not initialized'})
+    
+    status = camera_preview_service.get_status()
+    return jsonify(status)
+
+def cleanup_services():
+    """Clean up all services when app shuts down."""
+    global video_service, camera_preview_service
+    
+    if video_service:
+        try:
+            video_service.release()
+            logger.info("Video service cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up video service: {e}")
+    
+    if camera_preview_service:
+        try:
+            camera_preview_service.release()
+            logger.info("Camera preview service cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up camera preview service: {e}")
+
+# Register cleanup function
+import atexit
+atexit.register(cleanup_services)

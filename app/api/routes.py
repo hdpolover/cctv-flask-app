@@ -84,6 +84,44 @@ def reset_counter():
         return jsonify({'success': True, 'message': 'Counters reset successfully'})
     return jsonify({'error': 'Detection model not initialized'}), 500
 
+@api_bp.route('/counter/force-update', methods=['POST'])
+def force_counter_update():
+    """Manually trigger a counter update emission for testing."""
+    from app.core.routes import video_service
+    
+    if video_service:
+        try:
+            # Test detection and emit results
+            success = video_service.test_detection_and_emit()
+            if success:
+                return jsonify({
+                    'success': True, 
+                    'message': 'Counter update forced successfully',
+                    'detection_status': video_service.get_detection_status()
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'message': 'Failed to force counter update - no frame available'
+                })
+        except Exception as e:
+            logger.error(f"Error forcing counter update: {e}")
+            return jsonify({
+                'success': False, 
+                'message': f'Error forcing counter update: {str(e)}'
+            })
+    return jsonify({'error': 'Video service not initialized'}), 500
+
+@api_bp.route('/detection/status', methods=['GET'])
+def get_detection_status():
+    """Get detailed detection status for debugging."""
+    from app.core.routes import video_service
+    
+    if video_service:
+        status = video_service.get_detection_status()
+        return jsonify(status)
+    return jsonify({'error': 'Video service not initialized'}), 500
+
 @api_bp.route('/settings', methods=['GET'])
 def get_settings():
     """Get current camera and detection settings."""

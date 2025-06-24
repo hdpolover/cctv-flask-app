@@ -76,6 +76,9 @@ class DetectionModel:
         self.right_to_left = 0
         self.top_to_bottom = 0
         self.bottom_to_top = 0
+        # For tracking state refresh
+        self._tracking_refresh_counter = 0
+        self._old_previous_centers = {}
 
     def load_model(self):
         """Load the Faster R-CNN model pre-trained on COCO dataset.
@@ -100,12 +103,27 @@ class DetectionModel:
         Returns:
             True if door area was set successfully
         """
-        self.door_area = (x1, y1, x2, y2)
+        # Store previous area to check if it actually changed
+        old_area = self.door_area
+        new_area = (x1, y1, x2, y2)
+        
+        self.door_area = new_area
         self.door_defined = True
-        # Reset counters when door area is changed
-        self.left_to_right = 0
-        self.right_to_left = 0
-        self.previous_centers = {}
+        
+        # Only reset tracking state if the door area actually changed significantly
+        if old_area is None or self._area_changed_significantly(old_area, new_area):
+            # Reset counters when door area is changed
+            self.left_to_right = 0
+            self.right_to_left = 0
+            self.top_to_bottom = 0
+            self.bottom_to_top = 0
+            # Don't reset previous_centers immediately to avoid tracking interruption
+            # Instead, mark for gradual cleanup
+            self._mark_tracking_state_for_refresh()
+            logger.info(f"Door area changed significantly: {old_area} -> {new_area}")
+        else:
+            logger.info(f"Door area updated (minor change): {new_area}")
+            
         logger.info(f"Door area set to: {self.door_area}")
         return True    
     
@@ -141,12 +159,15 @@ class DetectionModel:
     def get_box_center(self, box):
         """Calculate center point of bounding box.
         
-        Args:            box: Bounding box coordinates [x1, y1, x2, y2]
+        Args:
+            box: Bounding box coordinates [x1, y1, x2, y2]
             
         Returns:
             (center_x, center_y) coordinates
-        """        
-        return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+        """
+        # Ensure we get scalar values, not arrays
+        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+        return (int((x1 + x2) // 2), int((y1 + y2) // 2))
     
     def is_crossing_door(self, prev_center, current_center):
         """Determine if a person is crossing the door area.
@@ -259,7 +280,7 @@ class DetectionModel:
 
                 # Try to match with previous centers
                 for track_id, prev_center in self.previous_centers.items():
-                    dist = np.sqrt((center_x - prev_center[0])**2 + (center_y - prev_center[1])**2)
+                    dist = float(np.sqrt((center_x - prev_center[0])**2 + (center_y - prev_center[1])**2))
                     if dist < min_dist and dist < self.tracking_threshold:
                         min_dist = dist
                         matched_id = track_id
@@ -282,6 +303,10 @@ class DetectionModel:
                     elif prev_x >= center_line and center_x < center_line:
                         movement_count["right_to_left"] += 1
                         self.right_to_left += 1
+            
+            # Update previous centers
+            self.previous_centers = current_centers
+            return movement_count
         else:            # Use door area detection
             current_centers = {}
             movement_count = {
@@ -300,7 +325,7 @@ class DetectionModel:
 
                 # Try to match with previous centers
                 for track_id, prev_center in self.previous_centers.items():
-                    dist = np.sqrt((center_x - prev_center[0])**2 + (center_y - prev_center[1])**2)
+                    dist = float(np.sqrt((center_x - prev_center[0])**2 + (center_y - prev_center[1])**2))
                     if dist < min_dist and dist < self.tracking_threshold:
                         min_dist = dist
                         matched_id = track_id
@@ -366,7 +391,10 @@ class DetectionModel:
         """Reset all movement counters and tracking state."""
         self.left_to_right = 0
         self.right_to_left = 0
-        self.previous_centers = {}
+        self.top_to_bottom = 0
+        self.bottom_to_top = 0
+        # Mark for tracking state refresh instead of immediate reset
+        self._mark_tracking_state_for_refresh()
         self.track_id = 0
         logger.info("Movement counters have been reset")    
         
@@ -414,17 +442,35 @@ class DetectionModel:
 
         # Filter out non-person detections and low-confidence scores
         person_indices = (labels == 1) & (scores >= score_threshold)
-        boxes = boxes[person_indices]
-        scores = scores[person_indices]
+        
+        # Check if any person detections exist before filtering
+        if torch.any(person_indices):
+            boxes = boxes[person_indices]
+            scores = scores[person_indices]
 
-        # Apply NMS
-        keep_indices = ops.nms(boxes, scores, iou_threshold)
-        people_boxes = boxes[keep_indices].cpu().numpy().astype(int)
+            # Apply NMS only if we have detections
+            if len(boxes) > 0:
+                keep_indices = ops.nms(boxes, scores, iou_threshold)
+                people_boxes = boxes[keep_indices].cpu().numpy().astype(int)
+            else:
+                people_boxes = []
+        else:
+            people_boxes = []
         timing['postprocess'] = time.time() - postprocess_start
 
         # Timing: Tracking
         tracking_start = time.time()
         movement = self.track_movement(people_boxes, image.shape[1])
+        
+        # Perform gradual cleanup of tracking state if needed
+        if self._tracking_refresh_counter > 0:
+            self._tracking_refresh_counter -= 1
+            if self._tracking_refresh_counter == 0:
+                # Now fully reset tracking state after a few frames
+                logger.debug("Completed gradual tracking state refresh")
+                self.previous_centers = {}
+                self._old_previous_centers = {}
+        
         timing['tracking'] = time.time() - tracking_start
         
         # Timing: Total detection time
@@ -521,3 +567,54 @@ class DetectionModel:
             String indicating inside direction ("left", "right", "up", or "down")
         """
         return self.inside_direction
+    
+    def _area_changed_significantly(self, old_area, new_area):
+        """Determine if the door area changed enough to warrant resetting tracking.
+        
+        Args:
+            old_area: Old door area coordinates (x1, y1, x2, y2)
+            new_area: New door area coordinates (x1, y1, x2, y2)
+            
+        Returns:
+            True if the change is significant
+        """
+        # If either area is None, consider it a significant change
+        if old_area is None or new_area is None:
+            return True
+            
+        # Calculate percentage change in each coordinate
+        old_x1, old_y1, old_x2, old_y2 = old_area
+        new_x1, new_y1, new_x2, new_y2 = new_area
+        
+        # Calculate old area size
+        old_width = old_x2 - old_x1
+        old_height = old_y2 - old_y1
+        old_size = old_width * old_height
+        
+        # Calculate new area size
+        new_width = new_x2 - new_x1
+        new_height = new_y2 - new_y1
+        new_size = new_width * new_height
+        
+        # If area size changed by more than 20%, consider it significant
+        if old_size == 0 or abs(new_size - old_size) / old_size > 0.2:
+            return True
+            
+        # If position shifted by more than 20% of the door width/height, consider it significant
+        if (abs(new_x1 - old_x1) > old_width * 0.2 or
+            abs(new_y1 - old_y1) > old_height * 0.2 or
+            abs(new_x2 - old_x2) > old_width * 0.2 or
+            abs(new_y2 - old_y2) > old_height * 0.2):
+            return True
+            
+        return False
+        
+    def _mark_tracking_state_for_refresh(self):
+        """Mark tracking state for gradual refresh instead of immediate reset.
+        
+        This prevents video stream interruption when door area is changed.
+        """
+        # Set a counter for gradual cleanup
+        self._tracking_refresh_counter = 10  # Will clean up over next 10 frames
+        # Store the old tracking state but don't reset it immediately
+        self._old_previous_centers = self.previous_centers.copy()

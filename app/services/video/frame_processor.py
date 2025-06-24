@@ -73,7 +73,25 @@ class FrameProcessor:
             people_boxes = []
             movement = None
             if not skip_detection:
-                people_boxes, movement = self.detection_model.detect_people(frame)
+                try:
+                    people_boxes, movement = self.detection_model.detect_people(frame)
+                    
+                    # Add debug logging for detection results
+                    if len(people_boxes) > 0:
+                        logger.debug(f"Detected {len(people_boxes)} people in frame")
+                    
+                    # Log movement detection
+                    if movement is not None:
+                        # Handle both integer and dict movement responses
+                        movement_count = movement if isinstance(movement, int) else 0
+                        if movement_count > 0:
+                            entries, exits = self.detection_model.get_entry_exit_count()
+                            logger.info(f"Movement detected! Entries: {entries}, Exits: {exits}, People in room: {max(0, entries - exits)}")
+                except Exception as detection_error:
+                    logger.error(f"Detection failed: {detection_error}")
+                    # Continue with empty detection results
+                    people_boxes = []
+                    movement = None
             else:
                 # If in fallback mode, reset counters to avoid misleading data
                 if hasattr(self.detection_model, 'reset_counters'):
