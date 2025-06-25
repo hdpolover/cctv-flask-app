@@ -192,7 +192,9 @@ class DetectionModel:
         curr_x, curr_y = current_center
 
         # Determine door orientation based on aspect ratio
-        is_vertical_door = door_height > door_width * 1.2  # Use 1.2 ratio to clearly identify vertical doors
+        # For left-right crossings, we need vertical door treatment
+        # For up-down crossings, we need horizontal door treatment
+        is_vertical_door = door_height >= door_width * 0.9  # More lenient ratio to catch square-ish doors
         
         # Calculate the extended detection area (20% wider than door)
         extension = door_width * 0.2
@@ -202,41 +204,42 @@ class DetectionModel:
         # For vertical doors, focus on horizontal movement through the door frame
         if is_vertical_door:
             # Check if movement is within the valid height range of the door (with small buffer)
-            buffer = door_height * 0.1
+            buffer = door_height * 0.15
             if ((y1 - buffer) <= prev_y <= (y2 + buffer)) or ((y1 - buffer) <= curr_y <= (y2 + buffer)):
-                # Define entrance and exit zones
-                entrance_zone = (extended_x1, x1 + door_width * 0.25)  # Left side zone
-                exit_zone = (x2 - door_width * 0.25, extended_x2)      # Right side zone
+                # Use a simpler approach: check if crossing the door center line
+                door_center_x = (x1 + x2) / 2
                 
-                # Check left to right movement
-                if (entrance_zone[0] <= prev_x <= entrance_zone[1] and 
-                    curr_x >= exit_zone[0]):
-                    return True, "left_to_right"
+                # Check left to right movement (crossing center line from left to right)
+                if (prev_x < door_center_x and curr_x > door_center_x):
+                    # Ensure both positions are reasonably close to the door area
+                    if (abs(prev_x - x1) <= door_width and abs(curr_x - x2) <= door_width):
+                        return True, "left_to_right"
                     
-                # Check right to left movement
-                if (exit_zone[0] <= prev_x <= exit_zone[1] and 
-                    curr_x <= entrance_zone[1]):
-                    return True, "right_to_left"
+                # Check right to left movement (crossing center line from right to left)
+                if (prev_x > door_center_x and curr_x < door_center_x):
+                    # Ensure both positions are reasonably close to the door area  
+                    if (abs(prev_x - x2) <= door_width and abs(curr_x - x1) <= door_width):
+                        return True, "right_to_left"
         else:
             # For horizontal doors, use the standard top/bottom detection
-            # Define entrance and exit zones for vertical movement
-            buffer = door_height * 0.2
-            top_zone = (y1 - buffer, y1 + door_height * 0.3)
-            bottom_zone = (y2 - door_height * 0.3, y2 + buffer)
+            # Use a simpler approach: check if crossing the door center line
+            door_center_y = (y1 + y2) / 2
+            buffer = door_width * 0.15
             
-            # Check if movement is within the door width (with small buffer)
-            if ((x1 - door_width * 0.1) <= prev_x <= (x2 + door_width * 0.1)) or \
-               ((x1 - door_width * 0.1) <= curr_x <= (x2 + door_width * 0.1)):
+            # Check if movement is within the door width (with buffer)
+            if ((x1 - buffer) <= prev_x <= (x2 + buffer)) or ((x1 - buffer) <= curr_x <= (x2 + buffer)):
                 
-                # Check top to bottom movement
-                if (top_zone[0] <= prev_y <= top_zone[1] and 
-                    curr_y >= bottom_zone[0]):
-                    return True, "top_to_bottom"
+                # Check top to bottom movement (crossing center line from top to bottom)
+                if (prev_y < door_center_y and curr_y > door_center_y):
+                    # Ensure both positions are reasonably close to the door area
+                    if (abs(prev_y - y1) <= door_height and abs(curr_y - y2) <= door_height):
+                        return True, "top_to_bottom"
                     
-                # Check bottom to top movement
-                if (bottom_zone[0] <= prev_y <= bottom_zone[1] and 
-                    curr_y <= top_zone[1]):
-                    return True, "bottom_to_top"
+                # Check bottom to top movement (crossing center line from bottom to top)
+                if (prev_y > door_center_y and curr_y < door_center_y):
+                    # Ensure both positions are reasonably close to the door area
+                    if (abs(prev_y - y2) <= door_height and abs(curr_y - y1) <= door_height):
+                        return True, "bottom_to_top"
                     
         return False, None
 
@@ -266,6 +269,9 @@ class DetectionModel:
         Returns:
             Dictionary with movement counts
         """
+        # Add debug logging for tracking
+        logger.debug(f"Track movement called with {len(current_boxes)} boxes, door_defined: {self.door_defined}")
+        
         if not self.door_defined:
             # Fall back to center line detection if door not defined
             center_line = frame_width // 2
@@ -316,6 +322,8 @@ class DetectionModel:
                 "bottom_to_top": 0
             }
 
+            logger.debug(f"Using door area detection. Door area: {self.door_area}")
+
             # Calculate centers for current boxes
             for box in current_boxes:
                 center = self.get_box_center(box)
@@ -334,33 +342,40 @@ class DetectionModel:
                 if matched_id is None:
                     matched_id = self.track_id
                     self.track_id += 1
+                    logger.debug(f"Created new track ID: {matched_id} at position {center}")
 
                 current_centers[matched_id] = center
 
                 # Check if person is in or near door area and track movement
                 if matched_id in self.previous_centers:
-                    crossed, direction = self.is_crossing_door(
-                        self.previous_centers[matched_id], center
-                    )
+                    prev_center = self.previous_centers[matched_id]
+                    logger.debug(f"Tracking person {matched_id}: {prev_center} -> {center}")
+                    
+                    crossed, direction = self.is_crossing_door(prev_center, center)
                     
                     if crossed:
                         movement_count[direction] += 1
                         if direction == "left_to_right":
                             self.left_to_right += 1
-                            logger.debug(f"Person {matched_id} moved left to right through door")
+                            logger.info(f"🚶‍♂️ Person {matched_id} moved LEFT TO RIGHT through door! Total: {self.left_to_right}")
                         elif direction == "right_to_left":
                             self.right_to_left += 1
-                            logger.debug(f"Person {matched_id} moved right to left through door")
+                            logger.info(f"🚶‍♂️ Person {matched_id} moved RIGHT TO LEFT through door! Total: {self.right_to_left}")
                         elif direction == "top_to_bottom":
                             self.top_to_bottom += 1
-                            logger.debug(f"Person {matched_id} moved top to bottom through door")
+                            logger.info(f"🚶‍♂️ Person {matched_id} moved TOP TO BOTTOM through door! Total: {self.top_to_bottom}")
                         elif direction == "bottom_to_top":
                             self.bottom_to_top += 1
-                            logger.debug(f"Person {matched_id} moved bottom to top through door")
+                            logger.info(f"🚶‍♂️ Person {matched_id} moved BOTTOM TO TOP through door! Total: {self.bottom_to_top}")
+                else:
+                    logger.debug(f"Person {matched_id} is new, no previous position to compare")
 
-        # Update previous centers
-        self.previous_centers = current_centers
-        return movement_count
+            logger.debug(f"Movement this frame: {movement_count}")
+            logger.debug(f"Total counters - L2R: {self.left_to_right}, R2L: {self.right_to_left}, T2B: {self.top_to_bottom}, B2T: {self.bottom_to_top}")
+
+            # Update previous centers
+            self.previous_centers = current_centers
+            return movement_count
           
     def get_entry_exit_count(self):
         """Return the number of entries and exits based on the inside direction.
